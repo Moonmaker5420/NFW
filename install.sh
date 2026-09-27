@@ -54,7 +54,7 @@ export DEBIAN_FRONTEND=noninteractive
 log "installing system dependencies..."
 apt-get update -qq
 apt-get install -y -qq \
-    python3 python3-venv python3-pip \
+    python3 python3-venv python3-pip python3-bcrypt rsync \
     nftables openssl chrony jq whiptail socat \
     isc-dhcp-server bind9-dnsutils conntrack \
     kmod procps psmisc curl ca-certificates \
@@ -294,7 +294,7 @@ NOW_TS=$(date +%s)
 REV="$(date -u +%Y%m%dT%H%M%SZ)-install"
 
 python3 - "$REV" "$LAN_IP_ADDR" "$LAN_PREFIX" "$WAN" "$LAN" "$HOSTNAME" <<'PY'
-import json, sys, os
+import json, sys, os, time
 rev, lan_ip, lan_plen, wan, lan, hostname = sys.argv[1:7]
 
 cfg = {
@@ -343,7 +343,7 @@ rev_path = f"/var/lib/nfw/config/revisions/{rev}.json"
 with open(rev_path, "w") as f:
     json.dump(cfg, f, indent=2, sort_keys=True)
 with open("/var/lib/nfw/config/active.json", "w") as f:
-    json.dump({"revision": rev, "ts": int(os.times().elapsed)}, f, indent=2)
+    json.dump({"revision": rev, "ts": int(time.time())}, f, indent=2)
 
 # Meta
 with open(f"/var/lib/nfw/config/revisions/{rev}.meta", "w") as f:
