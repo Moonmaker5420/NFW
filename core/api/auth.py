@@ -167,6 +167,26 @@ def _gc_sessions() -> None:
         del _SESSIONS[sid]
 
 
+async def _alert_login_failed(username: str, reason: str = "") -> None:
+    """Fire-and-forget alert on failed login.
+
+    Called from the login path; must never raise. Calls the configd
+    alerts.notify action which handles threshold counting and SMTP.
+    """
+    try:
+        from .configd_client import call as _cd
+        await _cd("alerts.notify", {
+            "event": "login_failed",
+            "context": {"username": username},
+            "subject": f"Failed login for '{username}'",
+            "body": (f"A login attempt for user '{username}' failed.\n"
+                     f"Reason: {reason}\n\n"
+                     f"If this was not you, review access to the API port."),
+        }, timeout=15.0)
+    except Exception:
+        pass
+
+
 async def login(username: str, password: str):
     """Verify credentials. Returns either:
         {"session": Session}              — full auth complete
@@ -189,6 +209,14 @@ async def login(username: str, password: str):
     if not r or not r.get("ok"):
         LOG.warning("login: failed for %r (%s)", username,
                     (r or {}).get("reason", "invalid credentials"))
+        # Fire-and-forget alert dispatch. Failure to notify must never
+        # break the auth path — wrap everything in try/except.
+        try:
+            import asyncio as _asyncio
+            _asyncio.create_task(_alert_login_failed(username, reason=str(
+                (r or {}).get("reason", "invalid credentials"))))
+        except Exception as _e:
+            LOG.debug("alerts hook failed silently: %s", _e)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
                             detail="invalid credentials")
 

@@ -19,6 +19,7 @@ from configd import __version__  # noqa: E402
 from configd import authz, logsetup, protocol, registry  # noqa: E402
 from configd.actions import (
     advanced,
+    alerts,
     auth_acl,
     auth_oauth,
     auth_providers,

@@ -300,7 +300,46 @@ def fw_preview(_data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _alert_apply_failed(err: str, rev: str = "") -> None:
+    """Fire-and-forget alert on firewall apply failure.
+
+    Best-effort — must never raise into the caller.
+    """
+    try:
+        import sys as _sys
+        _sys.path.insert(0, "/opt/nfw")
+        _sys.path.insert(0, "/opt/nfw/core")
+        from config import store as _st
+        from modules.alerts import dispatcher as _d
+        cfg = _st.read()
+        _d.notify(cfg, "firewall_apply_failed",
+                  context={"revision": rev} if rev else {},
+                  subject="Firewall apply failed",
+                  body=(f"The firewall ruleset failed to apply.\n\n"
+                        f"Revision: {rev or '(unknown)'}\n"
+                        f"Error: {err[:500]}\n\n"
+                        f"Check the firewall preview and validator output."))
+    except Exception:
+        pass
+
+
+def _alert_on_failure(fn):
+    """Decorator: fire firewall_apply_failed alert on any exception."""
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            try:
+                _alert_apply_failed(str(e))
+            except Exception:
+                pass
+            raise
+    wrapper.__name__ = fn.__name__
+    return wrapper
+
+
 @action("firewall.apply_staged")
+@_alert_on_failure
 def fw_apply_staged(data: dict[str, Any]) -> dict[str, Any]:
     """
     Compile the CURRENT config (including any staging), validate, and

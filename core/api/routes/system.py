@@ -86,3 +86,28 @@ async def service_status(unit: str = Query(...),
 async def service_restart(body: dict = Body(...),
                           user: Session = Depends(require_acl("admin"))):
     return await _cd("service.restart", {"unit": body.get("unit")})
+
+# =========================================================================
+# Alerts / notifications
+# =========================================================================
+@router.get("/alerts/config")
+async def alerts_config_get(user: Session = Depends(require_acl("readonly"))):
+    return await _cd("alerts.config.get")
+
+
+@router.put("/alerts/config")
+async def alerts_config_set(body: dict = Body(...),
+                            user: Session = Depends(require_acl("admin"))):
+    return await _cd("alerts.config.set", {"config": body.get("config") or body})
+
+
+@router.post("/alerts/test")
+async def alerts_test(body: dict = Body(default={}),
+                      user: Session = Depends(require_acl("admin"))):
+    return await _cd("alerts.test", body or {})
+
+
+@router.get("/alerts/history")
+async def alerts_history(limit: int = 50,
+                         user: Session = Depends(require_acl("readonly"))):
+    return await _cd("alerts.history", {"limit": limit})

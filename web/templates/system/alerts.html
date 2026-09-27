@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+{% block title %}Alerts{% endblock %}
+{% block content %}
+<h1>Alerts</h1>
+<p class="subtitle">Get notified when important events happen — failed
+   logins, firewall apply failures, expiring certificates.</p>
+
+<div class="card">
+  <div class="row between" style="align-items:center;margin-bottom:12px">
+    <h3 style="margin:0">Notifications</h3>
+    <label class="row" style="gap:8px;align-items:center;margin:0">
+      <input type="checkbox" id="n-enabled" style="width:auto">
+      <span style="margin:0">Enable notifications</span>
+    </label>
+  </div>
+
+  <h4 style="margin:16px 0 8px;font-size:13px;color:var(--fg-mute);text-transform:uppercase;letter-spacing:.04em">
+    SMTP server
+  </h4>
+  <div class="grid-2">
+    <label class="field"><span>Host</span>
+      <input type="text" id="smtp-host" placeholder="smtp.gmail.com">
+    </label>
+    <label class="field"><span>Port</span>
+      <input type="text" id="smtp-port" placeholder="587">
+    </label>
+    <label class="field"><span>Username</span>
+      <input type="text" id="smtp-username" placeholder="user@example.com">
+    </label>
+    <label class="field"><span>Password</span>
+      <input type="password" id="smtp-password" placeholder="(unchanged if blank)">
+    </label>
+    <label class="field"><span>From address</span>
+      <input type="text" id="smtp-from" placeholder="nfw@example.com">
+    </label>
+    <label class="field"><span>To (comma-separated)</span>
+      <input type="text" id="smtp-to" placeholder="admin@example.com, ops@example.com">
+    </label>
+  </div>
+  <div class="row" style="gap:16px;margin:8px 0 4px">
+    <label class="row" style="gap:6px;align-items:center;margin:0">
+      <input type="checkbox" id="smtp-tls" style="width:auto"> STARTTLS
+    </label>
+    <label class="row" style="gap:6px;align-items:center;margin:0">
+      <input type="checkbox" id="smtp-ssl" style="width:auto"> Implicit SSL
+    </label>
+  </div>
+
+  <h4 style="margin:20px 0 8px;font-size:13px;color:var(--fg-mute);text-transform:uppercase;letter-spacing:.04em">
+    Events
+  </h4>
+  <div id="events-list">
+    <div class="muted">Loading…</div>
+  </div>
+
+  <div class="row" style="gap:8px;margin-top:20px">
+    <button id="save-btn" class="primary">Save</button>
+    <button id="test-btn">Send test email</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="row between" style="align-items:center;margin-bottom:12px">
+    <h3 style="margin:0">Recent alerts</h3>
+    <button id="hist-refresh">Refresh</button>
+  </div>
+  <div id="hist-tbl"><div class="muted">Loading…</div></div>
+</div>
+
+<style>
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 700px) { .grid-2 { grid-template-columns: 1fr; } }
+  .field > span { display: block; font-size: 12px; color: var(--fg-dim);
+                  margin-bottom: 4px; }
+  .field input { width: 100%; padding: 8px 10px;
+                 background: var(--bg); border: 1px solid var(--border);
+                 border-radius: 6px; color: var(--fg); font-size: 14px; }
+  .field input:focus { border-color: var(--accent); }
+  .event-row {
+    display: grid;
+    grid-template-columns: 40px 1fr auto auto;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    align-items: center;
+  }
+  .event-row:last-child { border-bottom: none; }
+  .event-row .name { font-size: 13px; font-weight: 600; }
+  .event-row .desc { font-size: 11px; color: var(--fg-mute);
+                     grid-column: 2 / -1; }
+  .event-row input[type=number] {
+    width: 70px; padding: 4px 8px; background: var(--bg);
+    border: 1px solid var(--border); border-radius: 4px;
+    color: var(--fg); font-size: 12px;
+  }
+  #hist-tbl table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  #hist-tbl th, #hist-tbl td {
+    text-align: left; padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  #hist-tbl th {
+    color: var(--fg-mute); font-weight: 500; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .st-sent      { color: #3fb950; }
+  .st-failed    { color: #f85149; }
+  .st-throttled { color: #8b949e; }
+</style>
+
+<script>
+(function () {
+  var EVENTS = [
+    { key: 'login_failed', name: 'Failed logins',
+      desc: 'Fires when N failed login attempts occur within a window.',
+      fields: ['threshold', 'window_minutes'] },
+    { key: 'firewall_apply_failed', name: 'Firewall apply failures',
+      desc: 'Fires immediately when the firewall ruleset fails to apply.',
+      fields: [] },
+    { key: 'cert_expiring', name: 'Certificates expiring',
+      desc: 'Fires when a CA certificate is close to expiry.',
+      fields: ['days_before'] },
+  ];
+
+  function setEnabled(on) {
+    document.querySelectorAll('.event-row input[type=checkbox]').forEach(function (el) {
+      el.disabled = !on;
+    });
+  }
+
+  function renderEvents(evcfg) {
+    evcfg = evcfg || {};
+    var host = document.getElementById('events-list');
+    host.innerHTML = EVENTS.map(function (e) {
+      var cfg = evcfg[e.key] || {};
+      var enabled = cfg.enabled !== false;
+      var extras = e.fields.map(function (f) {
+        var v = cfg[f] != null ? cfg[f] : '';
+        return '<label style="font-size:11px;color:var(--fg-mute)">'
+          + f.replace('_', ' ') + ' '
+          + '<input type="number" min="1" data-field="' + f + '" '
+          + 'data-event="' + e.key + '" value="' + v + '"></label>';
+      }).join(' ');
+      return '<div class="event-row">'
+        + '<input type="checkbox" data-event="' + e.key + '" data-role="enabled"'
+        + (enabled ? ' checked' : '') + '>'
+        + '<div><div class="name">' + e.name + '</div>'
+        + '<div class="desc">' + e.desc + '</div></div>'
+        + '<div style="display:flex;gap:10px;align-items:center">' + extras + '</div>'
+        + '</div>';
+    }).join('');
+  }
+
+  function collectEvents() {
+    var out = {};
+    document.querySelectorAll('[data-event]').forEach(function (el) {
+      var key = el.getAttribute('data-event');
+      var role = el.getAttribute('data-role');
+      var field = el.getAttribute('data-field');
+      if (!out[key]) out[key] = {};
+      if (role === 'enabled') out[key].enabled = el.checked;
+      else if (field) {
+        var v = parseInt(el.value, 10);
+        if (!isNaN(v)) out[key][field] = v;
+      }
+    });
+    return out;
+  }
+
+  async function loadConfig() {
+    try {
+      var r = await nfw.api.get('/api/system/alerts/config');
+      var c = r.config || {};
+      document.getElementById('n-enabled').checked = !!c.enabled;
+      var s = c.smtp || {};
+      document.getElementById('smtp-host').value = s.host || '';
+      document.getElementById('smtp-port').value = s.port || 587;
+      document.getElementById('smtp-username').value = s.username || '';
+      document.getElementById('smtp-from').value = s.from_addr || '';
+      document.getElementById('smtp-to').value = (s.to_addrs || []).join(', ');
+      document.getElementById('smtp-tls').checked = s.use_tls !== false;
+      document.getElementById('smtp-ssl').checked = !!s.use_ssl;
+      renderEvents(c.events || {});
+      setEnabled(!!c.enabled);
+    } catch (e) { nfw.toast.err(e.message); }
+  }
+
+  async function saveConfig() {
+    var body = {
+      enabled: document.getElementById('n-enabled').checked,
+      smtp: {
+        host: document.getElementById('smtp-host').value.trim(),
+        port: parseInt(document.getElementById('smtp-port').value, 10) || 587,
+        username: document.getElementById('smtp-username').value.trim(),
+        password: document.getElementById('smtp-password').value,
+        from_addr: document.getElementById('smtp-from').value.trim(),
+        to_addrs: document.getElementById('smtp-to').value.split(',').map(function (s) { return s.trim(); }).filter(Boolean),
+        use_tls: document.getElementById('smtp-tls').checked,
+        use_ssl: document.getElementById('smtp-ssl').checked,
+      },
+      events: collectEvents(),
+    };
+    try {
+      await nfw.api.put('/api/system/alerts/config', { config: body });
+      nfw.toast.ok('Saved');
+      document.getElementById('smtp-password').value = '';
+    } catch (e) { nfw.toast.err(e.message); }
+  }
+
+  async function sendTest() {
+    var btn = document.getElementById('test-btn');
+    btn.disabled = true;
+    btn.textContent = 'Sending…';
+    try {
+      var r = await nfw.api.post('/api/system/alerts/test', {});
+      if (r.ok) nfw.toast.ok('Test email sent');
+      else nfw.toast.err('Failed: ' + (r.error || 'unknown'));
+    } catch (e) { nfw.toast.err(e.message); }
+    finally { btn.disabled = false; btn.textContent = 'Send test email'; loadHistory(); }
+  }
+
+  async function loadHistory() {
+    var host = document.getElementById('hist-tbl');
+    try {
+      var r = await nfw.api.get('/api/system/alerts/history?limit=30');
+      var alerts = r.alerts || [];
+      if (!alerts.length) {
+        host.innerHTML = '<div class="muted">No alerts sent yet.</div>';
+        return;
+      }
+      var rows = alerts.map(function (a) {
+        var d = new Date(a.ts * 1000);
+        var ts = d.toLocaleString();
+        return '<tr>'
+          + '<td class="mono" style="font-size:11px">' + ts + '</td>'
+          + '<td>' + a.event + '</td>'
+          + '<td class="st-' + a.status + '">' + a.status + '</td>'
+          + '<td class="mono" style="font-size:11px">' + (a.error || '') + '</td>'
+          + '</tr>';
+      }).join('');
+      host.innerHTML = '<table><thead><tr>'
+        + '<th>Time</th><th>Event</th><th>Status</th><th>Error</th>'
+        + '</tr></thead><tbody>' + rows + '</tbody></table>';
+    } catch (e) {
+      host.innerHTML = '<div class="muted">error: ' + e.message + '</div>';
+    }
+  }
+
+  function _initAlertsPage() {
+    document.getElementById('n-enabled').addEventListener('change', function () {
+      setEnabled(this.checked);
+    });
+    document.getElementById('save-btn').addEventListener('click', saveConfig);
+    document.getElementById('test-btn').addEventListener('click', sendTest);
+    document.getElementById('hist-refresh').addEventListener('click', loadHistory);
+
+    loadConfig();
+    loadHistory();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _initAlertsPage);
+  } else {
+    _initAlertsPage();
+  }
+})();
+</script>
+{% endblock %}
