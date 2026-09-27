@@ -7,6 +7,11 @@
 <div class="row between" style="margin-bottom:12px">
   <button id="add-btn" class="primary">+ Add rule</button>
   <div class="row">
+    <label class="row" style="gap:6px;align-items:center;margin:0">
+      <input type="checkbox" id="live-counters" checked style="width:auto">
+      <span class="muted" style="margin:0;font-size:12px">live counters (5s)</span>
+    </label>
+    <button id="reset-all-btn" title="Reset counters for all rules">Reset counters</button>
     <button id="apply-btn" class="primary">Apply ruleset</button>
     <button id="refresh-btn">Refresh</button>
   </div>
@@ -103,19 +108,71 @@
     </div>
   </details>
 </template>
+
+<style>
+  .num { text-align: right; font-family: ui-monospace, monospace;
+         font-size: 11px; white-space: nowrap; }
+  .num-strong { font-weight: 600; color: var(--fg); }
+  .btn-reset { padding: 2px 6px; font-size: 12px; opacity: 0.6;
+               transition: opacity 0.15s; }
+  .btn-reset:hover { opacity: 1; }
+  .dead-rule { opacity: 0.55; }
+  #live-counters:checked + span { color: var(--accent); }
+</style>
 {% endblock %}
 {% block scripts %}
 <script>
 let RULES = [];
+let STATS = {};
 
 async function load() {
   try {
     RULES = (await nfw.api.get('/api/firewall/rules')).rules || [];
+    await loadStats();
     render();
   } catch (e) { nfw.toast.err(e.message); }
 }
 
+async function loadStats() {
+  try {
+    const r = await nfw.api.get('/api/firewall/rules/stats');
+    STATS = r.stats || {};
+    // Update just the counter cells in-place so in-progress interactions
+    // (drag, hover) aren't disrupted by a full re-render.
+    document.querySelectorAll('[data-stats-for]').forEach(td => {
+      const id = td.getAttribute('data-stats-for');
+      const s = STATS[id] || { bytes: 0, packets: 0 };
+      const [pk, by] = td.querySelectorAll('.num');
+      if (pk) pk.textContent = fmtPkts(s.packets);
+      if (by) by.textContent = fmtBytes(s.bytes);
+      // Dim rows with zero traffic (dead rules)
+      const row = td.closest('tr');
+      if (row) row.classList.toggle('dead-rule',
+        s.packets === 0 && RULES.find(x => x.id === id));
+    });
+  } catch (e) {
+    // Silent — stats failures shouldn't break the rules list
+    console.warn('stats fetch failed:', e.message);
+  }
+}
+
 function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+function fmtBytes(n) {
+  n = Number(n) || 0;
+  if (n === 0) return '0 B';
+  const u = ['B','KB','MB','GB','TB'];
+  let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  const dec = i === 0 ? 0 : (n >= 100 ? 0 : (n >= 10 ? 1 : 2));
+  return n.toFixed(dec) + ' ' + u[i];
+}
+
+function fmtPkts(n) {
+  n = Number(n) || 0;
+  if (n === 0) return '0';
+  return n.toLocaleString();
+}
 
 function render() {
   if (RULES.length === 0) {
@@ -123,8 +180,11 @@ function render() {
       '<div class="muted">No rules yet. Click "Add rule" to create one.</div>';
     return;
   }
-  const rows = RULES.map((r, i) => `
-    <tr draggable="true" data-id="${esc(r.id)}" data-idx="${i}">
+  const rows = RULES.map((r, i) => {
+    const s = STATS[r.id] || { bytes: 0, packets: 0 };
+    const dead = s.packets === 0;
+    return `
+    <tr draggable="true" data-id="${esc(r.id)}" data-idx="${i}" class="${dead ? 'dead-rule' : ''}">
       <td class="mono" style="width:36px">${i+1}</td>
       <td style="width:34px">
         <input type="checkbox" ${r.enabled ? 'checked' : ''} data-toggle="${esc(r.id)}" style="width:auto">
@@ -134,14 +194,28 @@ function render() {
       <td class="mono">${esc(r.proto)}</td>
       <td class="mono">${esc(r.source)} → ${esc(r.dest)}${r.dport ? ':' + esc(r.dport) : ''}</td>
       <td>${esc(r.description || '')}</td>
+      <td data-stats-for="${esc(r.id)}">
+        <span class="num">${fmtPkts(s.packets)}</span>
+      </td>
+      <td data-stats-for="${esc(r.id)}">
+        <span class="num num-strong">${fmtBytes(s.bytes)}</span>
+      </td>
       <td class="mono" style="font-size:11px;color:var(--fg-mute)">${esc(r.id)}</td>
-      <td style="width:120px">
+      <td style="width:150px">
         <button class="small" data-edit="${esc(r.id)}">Edit</button>
         <button class="small danger" data-del="${esc(r.id)}">Del</button>
+        <button class="small btn-reset" data-reset="${esc(r.id)}" title="Reset counters">↺</button>
       </td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
   document.getElementById('rules-tbl').innerHTML =
-    '<table class="data"><thead><tr><th>#</th><th>On</th><th>Action</th><th>Iface/Dir</th><th>Proto</th><th>Match</th><th>Description</th><th>ID</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+    '<table class="data"><thead><tr>'
+    + '<th>#</th><th>On</th><th>Action</th><th>Iface/Dir</th><th>Proto</th>'
+    + '<th>Match</th><th>Description</th>'
+    + '<th style="text-align:right">Packets</th>'
+    + '<th style="text-align:right">Bytes</th>'
+    + '<th>ID</th><th></th>'
+    + '</tr></thead><tbody>' + rows + '</tbody></table>';
   bind();
 }
 
@@ -163,6 +237,17 @@ function bind() {
   });
   document.querySelectorAll('[data-edit]').forEach(el => {
     el.addEventListener('click', () => editRule(el.getAttribute('data-edit')));
+  });
+  document.querySelectorAll('[data-reset]').forEach(el => {
+    el.addEventListener('click', async (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const ruleId = el.getAttribute('data-reset');
+      try {
+        await nfw.api.post('/api/firewall/rules/reset_counters', {rule_id: ruleId});
+        await loadStats();
+      } catch (e) { nfw.toast.err(e.message); }
+    });
   });
   // drag-to-reorder
   document.querySelectorAll('#rules-tbl tr[draggable=true]').forEach(row => {
@@ -235,6 +320,13 @@ function editRule(id) {
   m.appendChild(acts);
 }
 
+// ---- live counters autorefresh ------------------------------------------
+let _statsTimer = null;
+function setAutoRefresh(on) {
+  if (_statsTimer) { clearInterval(_statsTimer); _statsTimer = null; }
+  if (on) _statsTimer = setInterval(loadStats, 5000);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   load();
   document.getElementById('refresh-btn').addEventListener('click', load);
@@ -246,6 +338,17 @@ document.addEventListener('DOMContentLoaded', () => {
       nfw.toast.ok('Applied (' + r.bytes + ' bytes)');
     } catch (e) { nfw.toast.err(e.message); }
   });
+  document.getElementById('reset-all-btn').addEventListener('click', async () => {
+    if (!confirm('Reset counters for all rules?')) return;
+    try {
+      const r = await nfw.api.post('/api/firewall/rules/reset_counters', {});
+      nfw.toast.ok('Reset ' + (r.reset || 0) + ' rule(s)');
+      await loadStats();
+    } catch (e) { nfw.toast.err(e.message); }
+  });
+  const lc = document.getElementById('live-counters');
+  lc.addEventListener('change', () => setAutoRefresh(lc.checked));
+  if (lc.checked) setAutoRefresh(true);
 });
 </script>
 {% endblock %}

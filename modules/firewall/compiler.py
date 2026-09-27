@@ -292,7 +292,14 @@ def _rule_to_nft(rule: Rule, config: dict) -> str:
             f'limit rate {limit} log prefix "NFW-{act_upper}-RULE-{rule.id}: " level info'
         )
 
+    # --- Counter (per-rule byte/packet stats) + stable comment ---
+    # `counter` must be before the verdict.
+    # `comment` carries a stable NFW-RULE-<id> identifier — nft handles are
+    # reassigned on every recompile, so we can't key on them. The counters
+    # reader matches rules by comment.
+    parts.append("counter")
     parts.append(act)
+    parts.append(f'comment "NFW-RULE-{rule.id}"')
     return "        " + " ".join(parts)
 
 

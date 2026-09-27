@@ -364,3 +364,39 @@ def fw_apply_staged(data: dict[str, Any]) -> dict[str, Any]:
         "bytes": len(text),
         "revision": info.revision,
     }
+
+# =========================================================================
+# Per-rule counters (Phase 10e)
+# =========================================================================
+import sys as _sys
+_sys.path.insert(0, "/opt/nfw")
+from modules.firewall.counters import (  # noqa: E402
+    read_counters as _read_counters,
+    reset_counters as _reset_counters,
+)
+
+
+@action("firewall.rules.stats")
+def fw_rules_stats(_data: dict[str, Any]) -> dict[str, Any]:
+    """Return {rule_id: {bytes, packets, handle}} for every NFW-managed
+    rule currently loaded in the kernel. Rules without counters (e.g.
+    auto rules that don't pass through `_rule_to_nft`) are omitted."""
+    counters = _read_counters()
+    total_bytes = sum(v.get("bytes", 0) for v in counters.values())
+    total_packets = sum(v.get("packets", 0) for v in counters.values())
+    return {
+        "stats": counters,
+        "count": len(counters),
+        "total_bytes": total_bytes,
+        "total_packets": total_packets,
+    }
+
+
+@action("firewall.rules.reset_counters")
+def fw_rules_reset_counters(data: dict[str, Any]) -> dict[str, Any]:
+    """Reset counters for a single rule (data={'rule_id': '1001'}) or
+    for every NFW rule (data={} or data={'rule_id': None})."""
+    rule_id = data.get("rule_id")
+    if rule_id == "" or rule_id == "all":
+        rule_id = None
+    return _reset_counters(rule_id)

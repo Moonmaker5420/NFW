@@ -48,6 +48,28 @@ async def _cd(action: str, data: dict[str, Any] | None = None):
 async def list_rules(user: Session = Depends(require_acl("readonly"))):
     return await _cd("firewall.rules.list")
 
+@router.get("/rules/stats")
+async def firewall_rules_stats(
+        user: Session = Depends(require_acl("readonly"))):
+    """Per-rule byte/packet counters.
+
+    Returns {stats: {rule_id: {bytes, packets, handle}}, count,
+             total_bytes, total_packets}.
+    """
+    return await _cd("firewall.rules.stats")
+
+
+@router.post("/rules/reset_counters")
+async def firewall_rules_reset_counters(
+        body: dict = Body(default={}),
+        user: Session = Depends(require_acl("operator"))):
+    """Reset counters for one rule (body={'rule_id':'1001'}) or all
+    (body={} or {'rule_id':'all'})."""
+    rule_id = body.get("rule_id")
+    return await _cd("firewall.rules.reset_counters",
+                     {"rule_id": rule_id})
+
+
 
 @router.get("/rules/{rid}")
 async def get_rule(rid: str, user: Session = Depends(require_acl("readonly"))):
