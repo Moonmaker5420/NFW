@@ -55,7 +55,7 @@ log "installing system dependencies..."
 apt-get update -qq
 apt-get install -y -qq \
     python3 python3-venv python3-pip python3-bcrypt rsync \
-    nftables openssl chrony jq whiptail socat \
+    nftables rrdtool openssl chrony jq whiptail socat \
     isc-dhcp-server bind9-dnsutils conntrack \
     kmod procps psmisc curl ca-certificates \
     >/dev/null
@@ -230,6 +230,16 @@ fi
 
 systemctl daemon-reload
 
+# API cookie-signing key. Generate NOW so the API only ever reads it.
+# Inside the service sandbox, /etc is read-only (ProtectSystem=full),
+# so if this is missing when nfw-api starts, the API can't create it.
+if [ ! -f /etc/nfw/secret.key ]; then
+    log "generating API session secret..."
+    dd if=/dev/urandom of=/etc/nfw/secret.key bs=32 count=1 2>/dev/null
+    chown root:nfw /etc/nfw/secret.key
+    chmod 0640 /etc/nfw/secret.key
+fi
+
 # ==========================================================================
 # 7. Build venv from bundled wheels
 # ==========================================================================
@@ -366,7 +376,7 @@ pw = sys.argv[1]
 h = bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
 users = {
     "admin": {
-        "password_hash": h,
+        "hash": h,
         "role": "admin",
         "totp_enabled": False,
         "created_at": 0,
@@ -397,7 +407,14 @@ systemctl enable nfw-fix-ca-perms.service >/dev/null 2>&1 || true
 
 for t in nfw-alias-refresh nfw-ca-autorenew nfw-cp-bypass-refresh \
          nfw-cp-bytes nfw-geoip-update nfw-rrd-collector nfw-schedule-refresh; do
-    systemctl enable "${t}.timer" >/dev/null 2>&1 || true
+    systemctl enable --now "${t}.timer" >/dev/null 2>&1 || true
+done
+
+# Port conflict check — 8443 (API) and 8081 (portal) must be free.
+for port in 8443 8081; do
+    if ss -tln 2>/dev/null | awk '{print $4}' | grep -q ":$port$"; then
+        die "port $port already in use — stop the conflicting service and retry"
+    fi
 done
 
 systemctl start nfw-configd.service

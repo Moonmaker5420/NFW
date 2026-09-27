@@ -173,7 +173,7 @@ def auth_authenticate(data):
             if rec.get("disabled"):
                 local_disabled = True
             else:
-                stored = rec.get("hash", "")
+                stored = rec.get("hash") or rec.get("password_hash") or ""
                 try:
                     if stored and bcrypt.checkpw(password.encode("utf-8"),
                                                  stored.encode("utf-8")):
