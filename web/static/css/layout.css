@@ -342,3 +342,33 @@ body::after {
   content: none !important;
   display: none !important;
 }
+
+/* --------------------------------------------------------------------- */
+/* Collapsible nav groups (2026-09-27)                                   */
+/* Groups collapse when h3 is clicked; state persists in localStorage.   */
+/* --------------------------------------------------------------------- */
+aside.sidebar .group h3 {
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  padding-right: 22px;
+  transition: color 0.1s;
+}
+aside.sidebar .group h3:hover { color: var(--fg); }
+aside.sidebar .group h3::after {
+  content: '\25BE'; /* ▾ */
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  line-height: 1;
+  color: var(--fg-mute);
+  transition: transform 0.15s;
+}
+aside.sidebar .group.collapsed h3::after {
+  content: '\25B8'; /* ▸ */
+}
+aside.sidebar .group.collapsed h3 ~ a {
+  display: none;
+}

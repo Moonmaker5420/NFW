@@ -113,6 +113,52 @@ window.nfw = window.nfw || {};
     }
   }
 
+  // ---- Collapsible nav groups --------------------------------------
+  (function navGroups() {
+    var NAV_KEY = 'nfw-nav-expanded';
+    var expanded = {};
+    try {
+      var stored = localStorage.getItem(NAV_KEY);
+      if (stored) expanded = JSON.parse(stored) || {};
+    } catch (e) {}
+
+    function saveNav() {
+      try { localStorage.setItem(NAV_KEY, JSON.stringify(expanded)); } catch (e) {}
+    }
+
+    var groups = document.querySelectorAll('aside.sidebar .group');
+    groups.forEach(function (g) {
+      var h = g.querySelector('h3');
+      if (!h) return;
+      var key = h.textContent.trim().toLowerCase();
+      var hasActive = !!g.querySelector('a.active');
+
+      // initial state: saved preference if any, else expand only active
+      var wantExpanded;
+      if (Object.prototype.hasOwnProperty.call(expanded, key)) {
+        wantExpanded = !!expanded[key];
+      } else {
+        wantExpanded = hasActive;
+      }
+      if (!wantExpanded) g.classList.add('collapsed');
+
+      h.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        g.classList.toggle('collapsed');
+        expanded[key] = !g.classList.contains('collapsed');
+        saveNav();
+      });
+      h.setAttribute('role', 'button');
+      h.setAttribute('tabindex', '0');
+      h.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter' || ev.key === ' ') {
+          ev.preventDefault();
+          h.click();
+        }
+      });
+    });
+  })();
+
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
   } else {
