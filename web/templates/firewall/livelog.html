@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Live Firewall Log</h2>
+<p class="muted" style="margin-top:0">
+  Real-time view of packets hitting the firewall ruleset.
+  Rates are limited to <code>3/minute</code> per drop rule so a flood cannot
+  overwhelm the log.
+</p>
+
+<div class="card">
+  <div class="row between" style="margin-bottom:12px;flex-wrap:wrap;gap:8px">
+    <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+      <label class="row" style="gap:6px;align-items:center">
+        <span class="muted" style="margin:0">Action:</span>
+        <select id="ll-kind">
+          <option value="">All</option>
+          <option value="DROP">Drop</option>
+          <option value="ACCEPT">Accept</option>
+          <option value="REJECT">Reject</option>
+        </select>
+      </label>
+      <label class="row" style="gap:6px;align-items:center">
+        <span class="muted" style="margin:0">Chain:</span>
+        <select id="ll-scope">
+          <option value="">All</option>
+          <option value="INPUT">Input</option>
+          <option value="FORWARD">Forward</option>
+          <option value="OUTPUT">Output</option>
+          <option value="RULE">User rule</option>
+          <option value="MARTIAN">Martian</option>
+        </select>
+      </label>
+      <input type="text" id="ll-search" placeholder="Filter src / dst / rule id…"
+             style="min-width:220px;padding:6px 10px">
+    </div>
+    <div class="row" style="gap:8px;align-items:center">
+      <span class="muted" id="ll-status" style="margin:0">
+        <span class="dot" style="background:#8b949e"></span> connecting…
+      </span>
+      <button id="ll-pause">Pause</button>
+      <button id="ll-clear">Clear</button>
+    </div>
+  </div>
+
+  <p class="muted" style="margin:0 0 12px 0;font-size:12px;line-height:1.5">
+    <b>Note:</b> policy drops are always logged. Accept / reject events
+    appear here only for user rules that have <b>Log</b> enabled. Toggle
+    <b>Log</b> on any rule in <a href="/firewall/rules">Firewall &rarr; Rules</a>
+    to see its traffic.
+  </p>
+
+  <div id="ll-tbl" style="max-height:60vh;overflow-y:auto">
+    <div class="muted">Waiting for entries…</div>
+  </div>
+  <p class="muted" style="margin-top:8px;font-size:12px">
+    <b>Ring buffer:</b> last 5000 entries. Newest first. Refreshing the page
+    reconnects and drops everything not in the server-side ring.
+  </p>
+</div>
+
+<style>
+  #ll-tbl table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  #ll-tbl th, #ll-tbl td {
+    text-align: left; padding: 4px 8px;
+    border-bottom: 1px solid var(--border); white-space: nowrap;
+  }
+  #ll-tbl th {
+    position: sticky; top: 0;
+    background: var(--bg-alt); color: var(--fg-mute);
+    font-weight: 500; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  #ll-tbl td.mono { font-family: ui-monospace, monospace; }
+  #ll-tbl tr.k-drop   .kind { color: #f85149; font-weight: 600; }
+  #ll-tbl tr.k-accept .kind { color: #3fb950; font-weight: 600; }
+  #ll-tbl tr.k-reject .kind { color: #d29922; font-weight: 600; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+         margin-right: 4px; vertical-align: middle; }
+</style>
+
+<script>
+(function () {
+  var el = document.getElementById('ll-tbl');
+  var statusEl = document.getElementById('ll-status');
+  var paused = false;
+  var entries = [];
+  var MAX_ROWS = 500;
+  var ws = null;
+  var reconnectDelay = 1000;
+
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function fmtTs(ts) {
+    var d = new Date(ts * 1000);
+    return d.toLocaleTimeString();
+  }
+
+  function kindClass(k) {
+    return { DROP: 'k-drop', ACCEPT: 'k-accept', REJECT: 'k-reject' }[k] || '';
+  }
+
+  function matchesFilters(e) {
+    var k = document.getElementById('ll-kind').value;
+    var s = document.getElementById('ll-scope').value;
+    var q = document.getElementById('ll-search').value.trim().toLowerCase();
+    if (k && e.kind !== k) return false;
+    if (s && e.scope !== s) return false;
+    if (q) {
+      var hay = [e.src, e.dst, e.sport, e.dport, e.proto,
+                 e.in_if, e.out_if, e.rule_id, e.raw]
+        .join(' ').toLowerCase();
+      if (hay.indexOf(q) === -1) return false;
+    }
+    return true;
+  }
+
+  function render() {
+    var visible = entries.filter(matchesFilters).slice(0, MAX_ROWS);
+    if (!visible.length) {
+      el.innerHTML = '<div class="muted">No matching entries.</div>';
+      return;
+    }
+    var rows = visible.map(function (e) {
+      return '<tr class="' + kindClass(e.kind) + '">'
+        + '<td class="mono">' + fmtTs(e.ts) + '</td>'
+        + '<td class="kind">' + esc(e.kind) + '</td>'
+        + '<td>' + esc(e.scope) + (e.rule_id ? ' ' + esc(e.rule_id) : '') + '</td>'
+        + '<td class="mono">' + esc(e.src) + (e.sport ? ':' + e.sport : '') + '</td>'
+        + '<td class="mono">' + esc(e.dst) + (e.dport ? ':' + e.dport : '') + '</td>'
+        + '<td>' + esc(e.proto) + '</td>'
+        + '<td class="mono">' + esc(e.in_if) + (e.out_if ? ' → ' + e.out_if : '') + '</td>'
+        + '</tr>';
+    }).join('');
+    el.innerHTML = '<table><thead><tr>'
+      + '<th>Time</th><th>Action</th><th>Chain</th>'
+      + '<th>Source</th><th>Dest</th><th>Proto</th><th>Iface</th>'
+      + '</tr></thead><tbody>' + rows + '</tbody></table>';
+  }
+
+  function setStatus(text, color) {
+    statusEl.innerHTML = '<span class="dot" style="background:' + color + '"></span> ' + text;
+  }
+
+  function connect() {
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var url = proto + '//' + location.host + '/api/firewall/livelog/ws';
+    ws = new WebSocket(url);
+
+    ws.onopen = function () {
+      setStatus('connected', '#3fb950');
+      reconnectDelay = 1000;
+    };
+
+    ws.onmessage = function (ev) {
+      var msg;
+      try { msg = JSON.parse(ev.data); } catch (e) { return; }
+
+      if (msg.type === 'snapshot') {
+        entries = (msg.entries || []).slice();
+        render();
+      } else if (msg.type === 'append') {
+        if (paused) return;
+        var fresh = msg.entries || [];
+        for (var i = 0; i < fresh.length; i++) entries.unshift(fresh[i]);
+        if (entries.length > MAX_ROWS * 2) entries.length = MAX_ROWS * 2;
+        render();
+      }
+    };
+
+    ws.onclose = function () {
+      setStatus('reconnecting…', '#d29922');
+      setTimeout(connect, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 15000);
+    };
+
+    ws.onerror = function () {
+      setStatus('error', '#f85149');
+    };
+  }
+
+  document.getElementById('ll-kind').addEventListener('change', render);
+  document.getElementById('ll-scope').addEventListener('change', render);
+  var searchTimeout = null;
+  document.getElementById('ll-search').addEventListener('input', function () {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(render, 200);
+  });
+  document.getElementById('ll-pause').addEventListener('click', function () {
+    paused = !paused;
+    this.textContent = paused ? 'Resume' : 'Pause';
+  });
+  document.getElementById('ll-clear').addEventListener('click', function () {
+    entries = [];
+    render();
+  });
+
+  connect();
+})();
+</script>
+{% endblock %}

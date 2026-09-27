@@ -85,6 +85,11 @@ async def page_fw_preview(request: Request, user: Session = Depends(current_user
     return _render(request, "firewall/preview.html", **_ctx(request, user))
 
 
+@router.get("/firewall/livelog", response_class=HTMLResponse)
+async def page_fw_livelog(request: Request, user: Session = Depends(current_user)):
+    return _render(request, "firewall/livelog.html", **_ctx(request, user))
+
+
 @router.get("/firewall/nat/port-forward", response_class=HTMLResponse)
 async def page_pf(request: Request, user: Session = Depends(current_user)):
     return _render(request, "nat/port-forward.html", **_ctx(request, user))
