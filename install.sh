@@ -468,6 +468,12 @@ if [ -d "$INSTALL_DIR/helpers" ]; then
     done
 fi
 
+# nfw-upgrade wrapper (top-level, not under helpers/)
+if [ -f "$INSTALL_DIR/nfw-upgrade" ]; then
+    install -m 0755 "$INSTALL_DIR/nfw-upgrade" /usr/local/sbin/nfw-upgrade
+    log "installed: /usr/local/sbin/nfw-upgrade"
+fi
+
 # Copy units
 if [ -d "$INSTALL_DIR/systemd" ]; then
     for f in "$INSTALL_DIR/systemd"/nfw-*.service \
@@ -495,6 +501,25 @@ if [ ! -f /etc/nfw/secret.key ]; then
     chmod 0640 /etc/nfw/secret.key
 fi
 nfw_enforce_perms
+
+# ==========================================================================
+# 6b. Run config migrations (upgrade only)
+# ==========================================================================
+if [ "$MODE" = "upgrade" ] || [ "$MODE" = "reinstall" ]; then
+    if [ -x "$INSTALL_DIR/migrations/run.sh" ] && [ -n "$INSTALLED_VERSION" ]; then
+        log "running migrations: $INSTALLED_VERSION -> $SOURCE_VERSION"
+        if bash "$INSTALL_DIR/migrations/run.sh" "$INSTALLED_VERSION" "$SOURCE_VERSION"; then
+            log "migrations complete"
+        else
+            red "migrations failed"
+            if [ -n "$BACKUP_DIR" ]; then
+                ylw "rolling back due to migration failure"
+                nfw_rollback "$BACKUP_DIR" || true
+            fi
+            die "upgrade failed during migrations"
+        fi
+    fi
+fi
 
 # ==========================================================================
 # 7. Build venv from bundled wheels

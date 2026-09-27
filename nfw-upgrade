@@ -1,0 +1,40 @@
+#!/bin/bash
+# NFW upgrade wrapper — fetches latest installer and runs it in upgrade mode.
+#
+# Usage:
+#   sudo nfw-upgrade              # fetch + upgrade
+#   sudo nfw-upgrade --dry-run    # show plan, no changes
+#
+# Env:
+#   NFW_INSTALL_URL   override URL (default: GitHub raw)
+#   NFW_BRANCH        override branch (default: main)
+#   NFW_SOURCE        local tree override (skips fetch)
+set -euo pipefail
+
+[ "$(id -u)" -eq 0 ] || { echo "must run as root" >&2; exit 1; }
+
+BRANCH="${NFW_BRANCH:-main}"
+URL="${NFW_INSTALL_URL:-https://raw.githubusercontent.com/Moonmaker5420/NFW/${BRANCH}/install.sh}"
+
+if [ -n "${NFW_SOURCE:-}" ]; then
+    echo "using local source: $NFW_SOURCE"
+    exec bash "$NFW_SOURCE/install.sh" --upgrade "$@"
+fi
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+echo "fetching installer from $URL"
+if ! curl -fsSL "$URL" -o "$TMP/install.sh"; then
+    echo "fetch failed: $URL" >&2
+    exit 1
+fi
+
+# Basic sanity — expected shebang + guard
+head -1 "$TMP/install.sh" | grep -q '^#!' || {
+    echo "downloaded file is not a shell script" >&2
+    exit 1
+}
+
+chmod +x "$TMP/install.sh"
+exec bash "$TMP/install.sh" --upgrade "$@"
