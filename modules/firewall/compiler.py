@@ -284,9 +284,13 @@ def _rule_to_nft(rule: Rule, config: dict) -> str:
         parts.append(f'meta mark set {rule.tag}')
 
     # --- Logging ---
+    # Prefix format: NFW-<ACTION>-RULE-<id>:  (parsed by the live log viewer)
     if rule.log:
         limit = rule.log_limit or "3/minute"
-        parts.append(f'limit rate {limit} log prefix "NFW-{rule.id}: " level info')
+        act_upper = {"pass": "ACCEPT", "block": "DROP", "reject": "REJECT"}[rule.action]
+        parts.append(
+            f'limit rate {limit} log prefix "NFW-{act_upper}-RULE-{rule.id}: " level info'
+        )
 
     parts.append(act)
     return "        " + " ".join(parts)
@@ -550,7 +554,7 @@ def compile_ruleset(config: dict) -> str:
         except CompileError as e:
             raise CompileError(f"rule {r.id}: {e}")
 
-    lines.append('        limit rate 3/minute log prefix "NFW-INPUT-DROP: " level warn')
+    lines.append('        limit rate 3/minute log prefix "NFW-DROP-INPUT: " level warn')
     lines.append("    }")
     lines.append("")
 
@@ -616,6 +620,9 @@ def compile_ruleset(config: dict) -> str:
         except CompileError as e:
             raise CompileError(f"rule {r.id}: {e}")
 
+    # Terminal log before the implicit forward policy drop.
+    # Without this, blocked inter-zone traffic is invisible.
+    lines.append('        limit rate 3/minute log prefix "NFW-DROP-FORWARD: " level warn')
     lines.append("    }")
     lines.append("")
 

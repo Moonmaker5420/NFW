@@ -626,6 +626,9 @@ def validate(cfg: dict[str, Any]) -> None:
             v = r.get(k, "")
             if v and not isinstance(v, str):
                 raise SchemaError(f"firewall.rules[{i}].{k} must be string")
+        lg = r.get("log")
+        if lg is not None and not isinstance(lg, bool):
+            raise SchemaError(f"firewall.rules[{i}].log must be boolean")
 
     aliases = fw.get("aliases", [])
     if not isinstance(aliases, list):
