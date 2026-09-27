@@ -700,6 +700,7 @@ systemctl enable nfw-api.service      >/dev/null 2>&1 || true
 systemctl enable nfw-portal.service   >/dev/null 2>&1 || true
 systemctl enable nfw-sysctl.service   >/dev/null 2>&1 || true
 systemctl enable nfw-fix-ca-perms.service >/dev/null 2>&1 || true
+systemctl enable nfw-fix-nfw-perms.service >/dev/null 2>&1 || true
 
 for t in nfw-alias-refresh nfw-ca-autorenew nfw-cp-bypass-refresh \
          nfw-cp-bytes nfw-geoip-update nfw-rrd-collector nfw-schedule-refresh; do

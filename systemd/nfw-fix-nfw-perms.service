@@ -1,0 +1,13 @@
+[Unit]
+Description=Enforce /var/lib/nfw directory permissions
+Before=nfw-configd.service nfw-api.service nfw-portal.service
+After=local-fs.target
+Wants=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/nfw-fix-nfw-perms.sh
+
+[Install]
+WantedBy=multi-user.target
