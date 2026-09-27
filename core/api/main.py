@@ -39,7 +39,21 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
 )
 
-app = FastAPI(title="NFW API", version=__version__)
+import sys
+sys.path.insert(0, "/opt/nfw")
+from modules.firewall.livelog import reader as _livelog_reader
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def _lifespan(app):
+    await _livelog_reader.start()
+    try:
+        yield
+    finally:
+        await _livelog_reader.stop()
+
+
+app = FastAPI(title="NFW API", version=__version__, lifespan=_lifespan)
 
 TEMPLATE_DIR = Path("/opt/nfw/web/templates")
 STATIC_DIR = Path("/opt/nfw/web/static")

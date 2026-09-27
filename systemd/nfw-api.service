@@ -9,6 +9,7 @@ ConditionPathExists=/opt/nfw/core/api/main.py
 Type=simple
 User=www-data
 Group=nfw
+SupplementaryGroups=systemd-journal
 WorkingDirectory=/opt/nfw/core
 Environment=PYTHONUNBUFFERED=1
 Environment=PATH=/opt/nfw/venv/bin:/usr/local/bin:/usr/bin:/bin

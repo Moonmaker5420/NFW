@@ -12,6 +12,30 @@ from ..deps import require_acl
 router = APIRouter(prefix="/api/firewall", tags=["firewall"])
 
 
+@router.get("/livelog")
+async def firewall_livelog(limit: int = 200,
+                            kind: str = "",
+                            scope: str = "",
+                            q: str = "",
+                            user: Session = Depends(require_acl("readonly"))):
+    """Snapshot of recent firewall log entries.
+
+    kind:  DROP | ACCEPT | REJECT (empty = all)
+    scope: INPUT | FORWARD | OUTPUT | RULE | MARTIAN
+    q:     free-text search across src/dst/rule_id/raw
+    """
+    import sys
+    sys.path.insert(0, "/opt/nfw")
+    from modules.firewall.livelog import reader
+    return await reader.snapshot(
+        limit=min(max(limit, 1), 2000),
+        kind=kind or None,
+        scope=scope or None,
+        search=q or "",
+    )
+
+
+
 async def _cd(action: str, data: dict[str, Any] | None = None):
     try:
         return await configd_call(action, data)
