@@ -372,3 +372,22 @@ aside.sidebar .group.collapsed h3::after {
 aside.sidebar .group.collapsed h3 ~ a {
   display: none;
 }
+
+/* --------------------------------------------------------------------- */
+/* Sidebar icons                                                         */
+/* --------------------------------------------------------------------- */
+aside.sidebar a {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+aside.sidebar a .nav-icon {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  color: var(--fg-mute);
+  transition: color 0.1s;
+}
+aside.sidebar a:hover .nav-icon { color: var(--fg-dim); }
+aside.sidebar a.active .nav-icon { color: var(--accent); }
+aside.sidebar a span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

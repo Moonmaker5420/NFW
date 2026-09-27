@@ -1,60 +1,190 @@
 <aside class="sidebar">
+  <!-- Inline SVG icon sprite — hidden, referenced by <use>. -->
+  <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+    <defs>
+      <symbol id="i-grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+        <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+      </symbol>
+      <symbol id="i-sliders" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/>
+        <line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/>
+        <line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/>
+        <line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>
+      </symbol>
+      <symbol id="i-history" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><polyline points="3 3 3 8 8 8"/><polyline points="12 7 12 12 15 14"/>
+      </symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+      </symbol>
+      <symbol id="i-tag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20.6 13.4 12 22l-9-9V4h9l8.6 8.6a1.4 1.4 0 0 1 0 2.8z"/><line x1="7" y1="7" x2="7" y2="7.01"/>
+      </symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/>
+      </symbol>
+      <symbol id="i-filter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="22 3 2 3 10 12.5 10 19 14 21 14 12.5 22 3"/>
+      </symbol>
+      <symbol id="i-swap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+        <polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+      </symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+      </symbol>
+      <symbol id="i-server" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="2" width="20" height="8" rx="2"/>
+        <rect x="2" y="14" width="20" height="8" rx="2"/>
+        <line x1="6" y1="6" x2="6" y2="6.01"/><line x1="6" y1="18" x2="6" y2="18.01"/>
+      </symbol>
+      <symbol id="i-globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/>
+        <path d="M12 3a15 15 0 0 1 4 9 15 15 0 0 1-4 9 15 15 0 0 1-4-9 15 15 0 0 1 4-9z"/>
+      </symbol>
+      <symbol id="i-key" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 2l-2 2m-7.6 7.6a5 5 0 1 1-7 7 5 5 0 0 1 7-7zM21 2l-9 9"/>
+        <path d="M15.5 7.5 19 11"/>
+      </symbol>
+      <symbol id="i-wifi" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M5 12.5a10 10 0 0 1 14 0"/><path d="M2 9a15 15 0 0 1 20 0"/>
+        <path d="M8.5 16a5 5 0 0 1 7 0"/><line x1="12" y1="20" x2="12" y2="20.01"/>
+      </symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+      </symbol>
+      <symbol id="i-radar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>
+        <line x1="12" y1="12" x2="19" y2="5"/>
+      </symbol>
+      <symbol id="i-activity" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+      </symbol>
+      <symbol id="i-cert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="9" r="5"/><path d="M8.5 13.5 7 22l5-3 5 3-1.5-8.5"/>
+      </symbol>
+      <symbol id="i-shuffle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/>
+        <polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/>
+        <line x1="4" y1="4" x2="9" y2="9"/>
+      </symbol>
+      <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+      </symbol>
+      <symbol id="i-zap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+      </symbol>
+      <symbol id="i-branch" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/>
+        <circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>
+      </symbol>
+      <symbol id="i-cpu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/>
+        <line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/>
+        <line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/>
+        <line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/>
+        <line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/>
+      </symbol>
+      <symbol id="i-layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="12 2 2 7 12 12 22 7 12 2"/>
+        <polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>
+      </symbol>
+      <symbol id="i-route" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="6" cy="19" r="3"/><circle cx="18" cy="5" r="3"/>
+        <path d="M6 16V8a3 3 0 0 1 3-3h6"/><path d="M15 8l3-3-3-3"/>
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 0 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>
+      </symbol>
+      <symbol id="i-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+        <circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9"/>
+        <path d="M16 3.1a4 4 0 0 1 0 7.8"/>
+      </symbol>
+      <symbol id="i-shield-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        <polyline points="9 12 11 14 15 10"/>
+      </symbol>
+      <symbol id="i-user-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+        <circle cx="8.5" cy="7" r="4"/><polyline points="17 11 19 13 23 9"/>
+      </symbol>
+      <symbol id="i-file-text" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/>
+      </symbol>
+      <symbol id="i-bar-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/>
+      </symbol>
+    </defs>
+  </svg>
+
   <div class="group">
     <h3>Main</h3>
-    <a href="/">Dashboard</a>
-    <a href="/config">Configuration</a>
-    <a href="/config/revisions">Revisions</a>
+    <a href="/"><svg class="nav-icon"><use href="#i-grid"/></svg><span>Dashboard</span></a>
+    <a href="/config"><svg class="nav-icon"><use href="#i-sliders"/></svg><span>Configuration</span></a>
+    <a href="/config/revisions"><svg class="nav-icon"><use href="#i-history"/></svg><span>Revisions</span></a>
   </div>
+
   <div class="group">
     <h3>Firewall</h3>
-    <a href="/firewall/rules">Rules</a>
-    <a href="/firewall/aliases">Aliases</a>
-    <a href="/firewall/schedules">Schedules</a>
-    <a href="/firewall/settings/normalization">Normalization</a>
-    <a href="/firewall/nat">NAT</a>
-<a href="/firewall/preview">Preview</a>
+    <a href="/firewall/rules"><svg class="nav-icon"><use href="#i-shield"/></svg><span>Rules</span></a>
+    <a href="/firewall/aliases"><svg class="nav-icon"><use href="#i-tag"/></svg><span>Aliases</span></a>
+    <a href="/firewall/schedules"><svg class="nav-icon"><use href="#i-clock"/></svg><span>Schedules</span></a>
+    <a href="/firewall/settings/normalization"><svg class="nav-icon"><use href="#i-filter"/></svg><span>Normalization</span></a>
+    <a href="/firewall/nat"><svg class="nav-icon"><use href="#i-swap"/></svg><span>NAT</span></a>
+    <a href="/firewall/preview"><svg class="nav-icon"><use href="#i-eye"/></svg><span>Preview</span></a>
   </div>
+
   <div class="group">
     <h3>Services</h3>
-    <a href="/services/dhcp">DHCP</a>
-    <a href="/services/dns">DNS</a>
-    <a href="/services/ntp">NTP</a>
-    <a href="/services/radius">RADIUS</a>
-    <a href="/services/captiveportal">Captive Portal</a>
+    <a href="/services/dhcp"><svg class="nav-icon"><use href="#i-server"/></svg><span>DHCP</span></a>
+    <a href="/services/dns"><svg class="nav-icon"><use href="#i-globe"/></svg><span>DNS</span></a>
+    <a href="/services/ntp"><svg class="nav-icon"><use href="#i-clock"/></svg><span>NTP</span></a>
+    <a href="/services/radius"><svg class="nav-icon"><use href="#i-key"/></svg><span>RADIUS</span></a>
+    <a href="/services/captiveportal"><svg class="nav-icon"><use href="#i-wifi"/></svg><span>Captive Portal</span></a>
   </div>
+
   <div class="group">
     <h3>VPN</h3>
-    <a href="/vpn">All VPN</a>
+    <a href="/vpn"><svg class="nav-icon"><use href="#i-lock"/></svg><span>All VPN</span></a>
   </div>
+
   <div class="group">
     <h3>Security</h3>
-    <a href="/ids">IDS/IPS</a>
-    <a href="/shaper">Shaping</a>
+    <a href="/ids"><svg class="nav-icon"><use href="#i-radar"/></svg><span>IDS/IPS</span></a>
+    <a href="/shaper"><svg class="nav-icon"><use href="#i-activity"/></svg><span>Shaping</span></a>
   </div>
+
   <div class="group">
     <h3>Advanced</h3>
-    <a href="/advanced/acme">ACME Certs</a>
-    <a href="/advanced/haproxy">HAProxy</a>
-    <a href="/advanced/backup">Backup</a>
-    <a href="/advanced/misc">DDNS / WoL / SNMP</a>
+    <a href="/advanced/acme"><svg class="nav-icon"><use href="#i-cert"/></svg><span>ACME Certs</span></a>
+    <a href="/advanced/haproxy"><svg class="nav-icon"><use href="#i-shuffle"/></svg><span>HAProxy</span></a>
+    <a href="/advanced/backup"><svg class="nav-icon"><use href="#i-download"/></svg><span>Backup</span></a>
+    <a href="/advanced/misc"><svg class="nav-icon"><use href="#i-zap"/></svg><span>DDNS / WoL / SNMP</span></a>
   </div>
+
   <div class="group">
     <h3>System</h3>
-    <a href="/gateways">Gateways</a>
-    <a href="/system/interfaces">Interfaces</a>
-    <a href="/interfaces/advanced">Advanced Interfaces</a>
-    <a href="/system/routes">Routes</a>
-    <a href="/system/services">Services</a>
-    <a href="/system/users">Users</a>
-    <a href="/system/security">Security</a>
-    <a href="/system/ca">Certificate Authority</a>
-    <a href="/system/auth-providers">Auth Providers</a>
-    <a href="/system/acls">Access Control</a>
-    <a href="/system/logs">Logs</a>
+    <a href="/gateways"><svg class="nav-icon"><use href="#i-branch"/></svg><span>Gateways</span></a>
+    <a href="/system/interfaces"><svg class="nav-icon"><use href="#i-cpu"/></svg><span>Interfaces</span></a>
+    <a href="/interfaces/advanced"><svg class="nav-icon"><use href="#i-layers"/></svg><span>Advanced Interfaces</span></a>
+    <a href="/system/routes"><svg class="nav-icon"><use href="#i-route"/></svg><span>Routes</span></a>
+    <a href="/system/services"><svg class="nav-icon"><use href="#i-settings"/></svg><span>Services</span></a>
+    <a href="/system/users"><svg class="nav-icon"><use href="#i-users"/></svg><span>Users</span></a>
+    <a href="/system/security"><svg class="nav-icon"><use href="#i-shield-check"/></svg><span>Security</span></a>
+    <a href="/system/ca"><svg class="nav-icon"><use href="#i-cert"/></svg><span>Certificate Authority</span></a>
+    <a href="/system/auth-providers"><svg class="nav-icon"><use href="#i-user-check"/></svg><span>Auth Providers</span></a>
+    <a href="/system/acls"><svg class="nav-icon"><use href="#i-lock"/></svg><span>Access Control</span></a>
+    <a href="/system/logs"><svg class="nav-icon"><use href="#i-file-text"/></svg><span>Logs</span></a>
   </div>
+
   <div class="group">
     <h3>Diagnostics</h3>
-    <a href="/diagnostics">Diagnostics</a>
-    <a href="/reporting">Reporting</a>
+    <a href="/diagnostics"><svg class="nav-icon"><use href="#i-activity"/></svg><span>Diagnostics</span></a>
+    <a href="/reporting"><svg class="nav-icon"><use href="#i-bar-chart"/></svg><span>Reporting</span></a>
   </div>
 </aside>
