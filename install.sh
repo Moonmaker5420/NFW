@@ -426,6 +426,28 @@ sleep 3
 # ==========================================================================
 # 12. Marker + summary
 # ==========================================================================
+# Apply the firewall ruleset so nftables tables are live on the freshly
+# installed system.
+log "applying initial firewall ruleset..."
+python3 - <<'PYFW'
+import json, socket, sys
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.settimeout(60)
+try:
+    s.connect('/run/nfw/configd.sock')
+    s.sendall((json.dumps({'action': 'firewall.apply_staged', 'data': {}}) + '\n').encode())
+    buf = b''
+    while not buf.endswith(b'\n'):
+        c = s.recv(4096)
+        if not c:
+            break
+        buf += c
+    r = json.loads(buf)
+    print('firewall:', 'ok' if r.get('ok') else r.get('error'))
+except Exception as e:
+    print('firewall error:', e)
+PYFW
+
 touch "$MARKER"
 chown root:nfw "$MARKER" 2>/dev/null || true
 
