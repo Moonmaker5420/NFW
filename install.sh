@@ -712,6 +712,32 @@ systemctl start nfw-api.service
 systemctl start nfw-portal.service
 sleep 5
 
+# Networkd apply — bring up LAN/WAN interfaces with configured IPs.
+# Without this, the installer writes config but nothing tells systemd-
+# networkd to load it, so interfaces stay DOWN and the wizard is
+# unreachable.
+if [ "$MODE" = "fresh" ]; then
+    log "applying network interface configuration..."
+    python3 - <<'PYNET'
+import json, socket
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.settimeout(60)
+try:
+    s.connect('/run/nfw/configd.sock')
+    s.sendall((json.dumps({'action': 'network.iface.apply', 'data': {}}) + '\n').encode())
+    buf = b''
+    while not buf.endswith(b'\n'):
+        c = s.recv(4096)
+        if not c:
+            break
+        buf += c
+    r = json.loads(buf)
+    print('networkd:', 'ok' if r.get('ok') else r.get('error'))
+except Exception as e:
+    print('networkd error:', e)
+PYNET
+fi
+
 # Firewall apply (fresh install; upgrade already has it)
 if [ "$MODE" = "fresh" ]; then
     log "applying initial firewall ruleset..."
