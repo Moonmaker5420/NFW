@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NFW — First-Run Setup</title>
+<link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
+<style>
+  :root { --primary: #58a6ff; --bg: #0d1117; --card: #161b22;
+          --border: #30363d; --fg: #c9d1d9; --fg-dim: #8b949e;
+          --fg-bright: #f0f6fc; --danger: #f85149; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont,
+         "Segoe UI", Roboto, sans-serif; background: var(--bg);
+         color: var(--fg); min-height: 100vh; display: flex;
+         align-items: center; justify-content: center; padding: 20px; }
+  .card { background: var(--card); border: 1px solid var(--border);
+          border-radius: 12px; padding: 32px 28px; max-width: 480px;
+          width: 100%; box-shadow: 0 8px 32px rgba(0,0,0,0.4); }
+  h1 { margin: 0 0 8px; font-size: 22px; font-weight: 600;
+       text-align: center; color: var(--fg-bright); }
+  .sub { text-align: center; color: var(--fg-dim); font-size: 14px;
+         margin: 0 0 24px; line-height: 1.5; }
+  .steps { display: flex; gap: 8px; margin-bottom: 24px; }
+  .step { flex: 1; height: 4px; background: var(--border);
+          border-radius: 2px; transition: background 0.2s; }
+  .step.active { background: var(--primary); }
+  .step.done   { background: var(--primary); }
+  label { display: block; margin-bottom: 16px; }
+  label span { display: block; font-size: 12px; color: var(--fg-dim);
+               margin-bottom: 5px; letter-spacing: 0.02em; }
+  input[type=text], input[type=password], select {
+      width: 100%; padding: 11px 13px; background: var(--bg);
+      border: 1px solid var(--border); border-radius: 8px;
+      color: var(--fg); font-size: 15px; outline: none;
+      transition: border-color 0.15s; }
+  input:focus, select:focus { border-color: var(--primary); }
+  .hint { font-size: 12px; color: var(--fg-dim); margin-top: 4px; }
+  button { width: 100%; padding: 12px; background: var(--primary);
+           color: #fff; border: 0; border-radius: 8px; font-size: 15px;
+           font-weight: 600; cursor: pointer; transition: opacity 0.15s; }
+  button:hover { opacity: 0.9; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.secondary { background: transparent; color: var(--fg-dim);
+                     border: 1px solid var(--border); }
+  .row { display: flex; gap: 8px; margin-top: 16px; }
+  .row button { margin-top: 0; }
+  .err { background: rgba(248,81,73,0.1); border: 1px solid var(--danger);
+         color: var(--danger); padding: 10px 12px; border-radius: 8px;
+         font-size: 13px; margin-bottom: 16px; display: none; }
+  .err.visible { display: block; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+  .brand { text-align: center; margin-bottom: 20px; }
+  .brand img { width: 48px; height: 48px; }
+  .tldr { text-align: center; color: var(--fg-dim); font-size: 12px;
+          margin-top: 24px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="brand">
+    <img src="/static/img/favicon.svg" alt="NFW">
+  </div>
+  <h1>Welcome to NFW</h1>
+  <p class="sub">Let's finish setting up your firewall.</p>
+
+  <div class="steps">
+    <div class="step active" id="s1"></div>
+    <div class="step" id="s2"></div>
+    <div class="step" id="s3"></div>
+  </div>
+
+  <div class="err" id="err"></div>
+
+  <div class="panel active" id="panel-1">
+    <label>
+      <span>Hostname</span>
+      <input type="text" id="hostname" placeholder="nfw"
+             autocomplete="off" spellcheck="false" required>
+      <div class="hint">Letters, digits, hyphens, dots. No spaces.</div>
+    </label>
+    <label>
+      <span>Timezone</span>
+      <select id="timezone">
+        <option value="UTC">UTC</option>
+        <option value="Asia/Kolkata">Asia/Kolkata (IST, +05:30)</option>
+        <option value="America/New_York">America/New_York (ET)</option>
+        <option value="America/Los_Angeles">America/Los_Angeles (PT)</option>
+        <option value="Europe/London">Europe/London (GMT/BST)</option>
+        <option value="Europe/Berlin">Europe/Berlin (CET)</option>
+        <option value="Asia/Tokyo">Asia/Tokyo (JST, +09:00)</option>
+        <option value="Australia/Sydney">Australia/Sydney (AET)</option>
+      </select>
+    </label>
+    <div class="row">
+      <button id="next-1" type="button">Next →</button>
+    </div>
+  </div>
+
+  <div class="panel" id="panel-2">
+    <label>
+      <span>New admin password</span>
+      <input type="password" id="pw1" autocomplete="new-password" required>
+      <div class="hint">Minimum 6 characters.</div>
+    </label>
+    <label>
+      <span>Confirm password</span>
+      <input type="password" id="pw2" autocomplete="new-password" required>
+    </label>
+    <div class="row">
+      <button class="secondary" id="back-2" type="button">← Back</button>
+      <button id="next-2" type="button">Next →</button>
+    </div>
+  </div>
+
+  <div class="panel" id="panel-3">
+    <p class="sub" style="margin-bottom:20px">
+      Review and finish. Your password will be updated and you'll be
+      redirected to the dashboard.
+    </p>
+    <div style="font-size:14px;line-height:1.8">
+      <div><b>Hostname:</b> <span id="sum-host"></span></div>
+      <div><b>Timezone:</b> <span id="sum-tz"></span></div>
+      <div><b>Password:</b> <span style="color:var(--fg-dim)">••••••••</span></div>
+    </div>
+    <div class="row">
+      <button class="secondary" id="back-3" type="button">← Back</button>
+      <button id="finish" type="button">Finish setup</button>
+    </div>
+  </div>
+
+  <div class="tldr">Need help? See the documentation on the GitHub repo.</div>
+</div>
+
+<script>
+(function () {
+  var state = { hostname: 'nfw', timezone: 'UTC', admin_password: '' };
+
+  function show(n) {
+    [1, 2, 3].forEach(function (i) {
+      document.getElementById('panel-' + i)
+        .classList.toggle('active', i === n);
+      var s = document.getElementById('s' + i);
+      s.classList.toggle('active', i === n);
+      s.classList.toggle('done', i < n);
+    });
+    document.getElementById('err').classList.remove('visible');
+  }
+
+  function err(msg) {
+    var e = document.getElementById('err');
+    e.textContent = msg;
+    e.classList.add('visible');
+  }
+
+  document.getElementById('next-1').onclick = function () {
+    var h = document.getElementById('hostname').value.trim();
+    if (!h) { err('Hostname is required.'); return; }
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9.\\-]{0,62}$/.test(h)) {
+      err('Invalid hostname. Use letters, digits, hyphens, dots.'); return;
+    }
+    state.hostname = h;
+    state.timezone = document.getElementById('timezone').value;
+    show(2);
+    document.getElementById('pw1').focus();
+  };
+
+  document.getElementById('next-2').onclick = function () {
+    var p1 = document.getElementById('pw1').value;
+    var p2 = document.getElementById('pw2').value;
+    if (p1.length < 6) { err('Password must be at least 6 characters.'); return; }
+    if (p1 !== p2) { err('Passwords do not match.'); return; }
+    state.admin_password = p1;
+    document.getElementById('sum-host').textContent = state.hostname;
+    document.getElementById('sum-tz').textContent = state.timezone;
+    show(3);
+  };
+
+  document.getElementById('back-2').onclick = function () { show(1); };
+  document.getElementById('back-3').onclick = function () { show(2); };
+
+  document.getElementById('finish').onclick = function () {
+    var btn = document.getElementById('finish');
+    btn.disabled = true;
+    btn.textContent = 'Finishing…';
+    fetch('/api/wizard/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify(state),
+    })
+    .then(function (r) {
+      return r.json().then(function (j) { return { status: r.status, body: j }; });
+    })
+    .then(function (r) {
+      if (r.status === 200 && r.body.ok) {
+        window.location = '/';
+      } else {
+        var msg = r.body.error || r.body.detail || 'Setup failed';
+        if (Array.isArray(msg)) {
+          msg = msg.map(function (e) {
+            return (e.loc ? e.loc.join('.') + ': ' : '') + (e.msg || 'invalid');
+          }).join('; ');
+        } else if (typeof msg === 'object') {
+          msg = JSON.stringify(msg);
+        }
+        err(String(msg));
+        btn.disabled = false;
+        btn.textContent = 'Finish setup';
+      }
+    })
+    .catch(function (e) {
+      err('Network error: ' + e.message);
+      btn.disabled = false;
+      btn.textContent = 'Finish setup';
+    });
+  };
+
+  document.getElementById('hostname').focus();
+})();
+</script>
+</body>
+</html>

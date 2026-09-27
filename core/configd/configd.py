@@ -46,6 +46,7 @@ from configd.actions import (
     system,
     users,
     vpn,
+    wizard,
 )  # noqa: E402  # noqa: E402  # noqa: E402  # noqa: E402  # noqa: E402  # noqa: E402  # noqa: E402  # noqa: E402  # noqa: E402
 
 import logging  # noqa: E402

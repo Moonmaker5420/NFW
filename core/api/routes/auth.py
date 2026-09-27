@@ -38,7 +38,17 @@ async def do_login(body: LoginBody, response: Response):
 
     sess: Session = result["session"]
     set_session_cookie(response, sess)
-    return {"ok": True, "username": sess.username, "role": sess.role}
+
+    # First-run: if the setup marker is still present, direct the client
+    # to /wizard. The gate middleware would redirect on the next nav
+    # anyway; this saves a round-trip and makes the intent explicit.
+    import os
+    redirect_to = "/wizard" if os.path.exists(
+        "/var/lib/nfw/config/setup_pending") else None
+    resp = {"ok": True, "username": sess.username, "role": sess.role}
+    if redirect_to:
+        resp["redirect"] = redirect_to
+    return resp
 
 
 @router.post("/2fa")

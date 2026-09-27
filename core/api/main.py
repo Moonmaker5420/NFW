@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from .middleware.auth import PageAuthMiddleware
+from .middleware.wizard import WizardGateMiddleware
 from .routes import auth as r_auth
 from .routes import auth_oauth as r_auth_oauth
 from .routes import auth_providers as r_auth_providers
@@ -31,6 +32,7 @@ from .routes import diagnostics as r_diagnostics
 from .routes import users as r_users
 from .routes import vpn as r_vpn
 from .routes import ws as r_ws
+from .routes import wizard as r_wizard
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,6 +44,7 @@ app = FastAPI(title="NFW API", version=__version__)
 TEMPLATE_DIR = Path("/opt/nfw/web/templates")
 STATIC_DIR = Path("/opt/nfw/web/static")
 
+app.add_middleware(WizardGateMiddleware)
 app.add_middleware(PageAuthMiddleware)
 
 if STATIC_DIR.exists():
@@ -65,6 +68,7 @@ app.include_router(r_system.router)
 app.include_router(r_users.router)
 app.include_router(r_vpn.router)
 app.include_router(r_ws.router)
+app.include_router(r_wizard.router)
 app.include_router(r_schedules.router)
 app.include_router(r_ui.router)
 app.include_router(r_diagnostics.router)

@@ -390,6 +390,14 @@ PY
 chown root:nfw /etc/nfw/users.json
 
 # ==========================================================================
+# 10b. Mark setup as pending (checked by API wizard gate)
+# ==========================================================================
+touch /var/lib/nfw/config/setup_pending
+chown root:nfw /var/lib/nfw/config/setup_pending 2>/dev/null || true
+chmod 0644 /var/lib/nfw/config/setup_pending
+log "setup marker written: /var/lib/nfw/config/setup_pending"
+
+# ==========================================================================
 # 11. Enable + start
 # ==========================================================================
 log "enabling and starting services..."
