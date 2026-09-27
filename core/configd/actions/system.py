@@ -1,6 +1,7 @@
 """System actions."""
 from __future__ import annotations
 
+import socket
 import os
 import platform
 import shutil
@@ -27,7 +28,7 @@ def system_info(_data: dict[str, Any]) -> dict[str, Any]:
     du = shutil.disk_usage("/")
     u = _read(UPTIME_FILE)
     return {
-        "hostname": platform.node(),
+        "hostname": socket.gethostname(),
         "kernel": platform.release(),
         "arch": platform.machine(),
         "python": platform.python_version(),

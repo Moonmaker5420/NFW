@@ -1,7 +1,7 @@
 """UI page routes — serve Jinja2 templates (Phase 4 adds firewall pages)."""
 from __future__ import annotations
 
-import platform
+import socket
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
@@ -20,7 +20,7 @@ templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 def _ctx(request: Request, user: Session, **extra) -> dict:
     ctx = {
         "user": {"username": user.username, "role": user.role},
-        "hostname": platform.node(),
+        "hostname": socket.gethostname(),
         "version": __version__,
     }
     ctx.update(extra)
@@ -28,7 +28,13 @@ def _ctx(request: Request, user: Session, **extra) -> dict:
 
 
 def _render(request: Request, template: str, **ctx) -> HTMLResponse:
-    return templates.TemplateResponse(request, template, ctx)
+    # Browsers cache HTML aggressively. Without no-store, a page rendered
+    # before a config change (e.g. hostname) keeps showing the old value
+    # for hours. See handoff §E.
+    resp = templates.TemplateResponse(request, template, ctx)
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    return resp
 
 
 @router.get("/login", response_class=HTMLResponse)
