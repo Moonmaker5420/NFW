@@ -4,7 +4,7 @@
 
 **An OPNsense-style firewall for any Debian or Ubuntu server.**
 
-nftables · FastAPI · systemd · captive portal · WireGuard · no proprietary bits
+nftables · FastAPI · systemd · captive portal · WireGuard · live logs · alerts · no proprietary bits
 
 [![Version](https://img.shields.io/badge/version-0.1.1-blue.svg)](VERSION)
 [![License](https://img.shields.io/badge/license-TBD-lightgrey.svg)](#license)
@@ -46,6 +46,8 @@ curl -fsSL https://raw.githubusercontent.com/Moonmaker5420/NFW/main/install.sh |
 - **Aliases**: host, network, port, port-range, URL (fetched from HTTPS), GeoIP
 - **NAT**: port-forward, 1:1, NPTv6, reflection, UPnP
 - **Live preview** of the compiled ruleset before applying
+- **Per-rule byte/packet counters** with a reset button and dead-rule detector
+- **Live log viewer** — WebSocket-streamed, filterable, with pause/clear
 
 ### Networking
 - Multi-NIC, WAN/LAN/OPT role assignment
@@ -84,12 +86,29 @@ curl -fsSL https://raw.githubusercontent.com/Moonmaker5420/NFW/main/install.sh |
 - Role-based ACLs (readonly / operator / admin)
 - 2FA (TOTP) with recovery codes
 
+### Alerts & Notifications
+- **SMTP delivery** with STARTTLS or implicit SSL
+- Events: failed logins, firewall apply failures, expiring certificates
+- Per-event thresholds and time windows
+- SQLite-backed history — every send recorded (sent / failed / throttled)
+- Throttling prevents alert storms — N events in M minutes → 1 alert
+- "Send test email" button in the GUI
+
+### Users & Access
+- Full GUI user management — add, edit, change role, disable, delete
+- Self-service password change
+- Admin password reset for any user
+- 2FA setup flow with QR / otpauth URI + recovery codes
+- Role hierarchy: readonly < operator < admin
+- ACL rules for fine-grained permission tweaks
+
 ### Web GUI
 - Modern dark theme, responsive layout
-- Collapsible sidebar with per-item icons
+- Collapsible sidebar with per-item icons, persisted state
 - Live RRD graphs (system, memory, disk, per-interface)
 - WebSocket notifications for long-running operations
-- First-run setup wizard — no console required after install
+- **First-run setup wizard** — no console required after install
+- **System power** — reboot / power off with recovery poll
 
 ### Console
 - `nfw-console-menu` on tty1 — assign interfaces, restart services, drop to shell
@@ -99,6 +118,7 @@ curl -fsSL https://raw.githubusercontent.com/Moonmaker5420/NFW/main/install.sh |
 - **`nfw-upgrade`** — one-command upgrade with automatic backup and rollback
 - Config revisions with rollback to any prior state
 - Full config export / import
+- Boot-time permission enforcement (`nfw-fix-nfw-perms`, `nfw-fix-ca-perms`)
 - Package-free: everything installs to `/opt/nfw`, no apt conflicts
 
 ---
@@ -111,11 +131,10 @@ curl -fsSL https://raw.githubusercontent.com/Moonmaker5420/NFW/main/install.sh |
 | Architecture | x86_64, aarch64, armv7 |
 | RAM | 1 GB |
 | Disk | 4 GB free in `/opt` and `/var` |
-| NICs | 2 (1 WAN, 1 LAN) — 1 works for testing |
+| NICs | **2 minimum** (1 WAN, 1 LAN) — single-NIC mode not supported for routing |
 | Init | systemd |
 
-Tested on: Ubuntu 24.04 LTS, VMware Workstation, QEMU/KVM.
-Untested but should work: Debian 12, Proxmox VMs, Hyper-V, bare metal.
+Tested on: Ubuntu 24.04 LTS, VMware Workstation, QEMU/KVM, Intel N100 mini PC.
 
 **Not supported:** Alpine, RHEL, Arch, or any non-systemd distro. NFW takes
 over the machine — do not install on a box running other critical services.
@@ -200,12 +219,9 @@ configurable from the GUI.
 
 ### If you can't reach the GUI
 
-Three cases:
-
 **A. You're accessing from the WAN side (e.g. a cloud VM).**
 By design, the GUI is only reachable on the LAN interface. Bring up a LAN
-interface and use its IP. If you only have one NIC, see the "single-NIC
-mode" section below.
+interface and use its IP.
 
 **B. The LAN interface has no carrier.**
 If the cable isn't plugged in, networkd won't bring the interface up.
@@ -216,12 +232,6 @@ Log in on the **console** (tty1 or serial) and use `nfw-console-menu` to
 reassign interfaces, or drop to a shell and edit
 `/var/lib/nfw/config/active.json`, then run `systemctl restart nfw-configd`.
 
-### Single-NIC mode
-
-Set the same interface for WAN and LAN during install. NFW will use it as
-a router-on-a-stick — WAN gets DHCP, LAN serves `192.168.10.0/24` on a
-subnet. Requires a managed switch for VLANs. Not recommended for production.
-
 ---
 
 ## Using the GUI
@@ -230,16 +240,48 @@ subnet. Requires a managed switch for VLANs. Not recommended for production.
 |---|---|
 | **Dashboard** | Live system stats, CPU/memory/disk, load average |
 | **Configuration** | Active config, staging, commit/rollback |
-| **Firewall** | Rules, aliases, schedules, NAT, normalization, preview |
+| **Firewall** | Rules, aliases, schedules, NAT, normalization, preview, **live log** |
 | **Services** | DHCP, DNS, NTP, RADIUS, Captive Portal |
 | **VPN** | WireGuard, OpenVPN, IPsec |
 | **Security** | Suricata IDS, traffic shaping |
 | **Advanced** | ACME, HAProxy, backup, DDNS/WoL/SNMP |
-| **System** | Gateways, interfaces, routes, users, CA, auth, logs |
+| **System** | Gateways, interfaces, routes, users, CA, auth, logs, alerts, power |
 | **Diagnostics** | Ping, traceroute, DNS, pcap, arbitrary commands |
 | **Reporting** | RRD graphs, top talkers, netflow |
 
 The sidebar is collapsible. Categories remember their state in `localStorage`.
+
+### Firewall → Live Log
+
+Real-time stream of packets hitting the ruleset. Every policy drop is logged;
+user rules with `Log` enabled also appear. Columns: Time, Action, Chain,
+Source, Dest, Proto, Iface. Filters: Action, Chain, free-text search.
+Pause/clear controls. Backed by a 5000-entry server-side ring buffer.
+
+### Firewall → Rules → Counters
+
+Every user rule shows live **Packets** and **Bytes**. Rules with zero traffic
+are dimmed — a quick way to spot dead rules. Per-row reset button, plus
+"Reset counters" for all rules. Auto-refresh every 5s while the page is open.
+
+### System → Alerts
+
+Configure SMTP and enable per-event notifications. Events available:
+
+| Event | Default threshold |
+|---|---|
+| Failed logins | 5 per 15 minutes |
+| Firewall apply failures | Immediate |
+| Certificates expiring | 14 days before expiry |
+
+Every alert is recorded in a history table with status and any SMTP error.
+"Send test email" verifies the SMTP path.
+
+### System → Power
+
+Reboot or power off. Schedules the action 5 seconds out, shows a full-screen
+overlay with a spinner, then polls `/api/health` until the firewall is back
+and redirects to the login page. Cancel is possible during the 5-second delay.
 
 ---
 
@@ -293,7 +335,7 @@ sudo NFW_FORCE=1 bash install.sh
 | `/var/lib/nfw/ca/` | `/opt/nfw/wheels/` |
 | `/var/lib/nfw/captiveportal/` | `/opt/nfw/systemd/` |
 | `/var/lib/nfw/aliases/` | `/opt/nfw/helpers/` |
-| | `/opt/nfw/venv/` (rebuilt) |
+| `/var/lib/nfw/alerts.db` | `/opt/nfw/venv/` (rebuilt) |
 
 ### Rolling back manually
 
@@ -311,14 +353,9 @@ sudo systemctl start nfw-configd nfw-api nfw-portal
 ## Uninstalling
 
 ```bash
-sudo nfw-uninstall
-```
-
-Or manually:
-
-```bash
 sudo systemctl stop nfw-configd nfw-api nfw-portal
-sudo systemctl disable nfw-configd nfw-api nfw-portal
+sudo systemctl disable nfw-configd nfw-api nfw-portal nfw-fix-nfw-perms nfw-fix-ca-perms
+sudo systemctl disable --now 'nfw-*.timer'
 sudo rm -rf /opt/nfw /var/lib/nfw /etc/nfw /var/log/nfw
 sudo rm -f /usr/local/sbin/nfw-*
 sudo rm -f /etc/systemd/system/nfw-*.service /etc/systemd/system/nfw-*.timer
@@ -340,13 +377,19 @@ sudo userdel nfw; sudo groupdel nfw
 │  nfw-api.service    (uvicorn as www-data:nfw)          │
 │  ─ FastAPI app, Jinja2 templates, static assets        │
 │  ─ TLS via systemd LoadCredential (root-only key)      │
+│  ─ SupplementaryGroups=systemd-journal (live log)      │
+│  ─ Live log reader + WebSocket streaming               │
+│  ─ In-memory session store (sessions survive           │
+│    page navigation but not API restarts)               │
 └──────────┬─────────────────────────────────────────────┘
            │ Unix socket /run/nfw/configd.sock
 ┌──────────▼─────────────────────────────────────────────┐
-│  nfw-configd.service    (Python 3.12, root)            │
-│  ─ Privileged action registry (no direct shell access) │
+│  nfw-configd.service    (Python 3.12, root, sandboxed) │
+│  ─ Privileged action registry                          │
 │  ─ Writes nft, networkd, dhcpd, freeradius, ...        │
 │  ─ SO_PEERCRED authorization                           │
+│  ─ Alerts dispatcher (SQLite + SMTP)                   │
+│  ─ Power actions via systemd-run                       │
 └────────────────────────────────────────────────────────┘
 
 ┌────────────────────────────────────────────────────────┐
@@ -365,8 +408,7 @@ checks the peer's credentials.
 
 **Config store** is revision-based. Every change creates a new
 `revisions/<timestamp>-<hash>.json` and updates `active.json`. Rollback is
-a pointer swap. There's no "diff-based" complexity — the full config is
-written every time.
+a pointer swap.
 
 **State layout** (`/var/lib/nfw`):
 
@@ -376,12 +418,15 @@ written every time.
 │   ├── active.json             {"revision": ..., "ts": ...}
 │   ├── revisions/<rev>.json    full config
 │   ├── staging.json            pending changes
-│   └── setup_pending           first-run marker
-├── ca/                         internal CA, bootstrap TLS
+│   ├── setup_pending           first-run wizard marker
+│   └── initialized             firstboot marker
+├── ca/                         internal CA + bootstrap TLS
 ├── captiveportal/              sessions.db, templates, bypass caches
 ├── aliases/                    URL / GeoIP cache
 ├── rrd/                        RRD metric files
-└── shaper/                     tc filter state
+├── shaper/                     tc filter state
+├── alerts.db                   alert event + send history
+└── backups/                    config-store rolling backups
 ```
 
 ---
@@ -404,7 +449,19 @@ Example:
     }
   },
   "firewall": { "rules": [], "aliases": [] },
-  "services": { "captiveportal_config": { "enabled": false } },
+  "services": {
+    "captiveportal_config": { "enabled": false },
+    "notifications": {
+      "enabled": true,
+      "smtp": { "host": "smtp.example.com", "port": 587,
+                "to_addrs": ["admin@example.com"] },
+      "events": {
+        "login_failed":          { "enabled": true, "threshold": 5, "window_minutes": 15 },
+        "firewall_apply_failed": { "enabled": true },
+        "cert_expiring":         { "enabled": true, "days_before": 14 }
+      }
+    }
+  },
   "auth":     { "providers": [{ "type": "local", "enabled": true }] }
 }
 ```
@@ -412,10 +469,9 @@ Example:
 ### Editing config
 
 - **Prefer the GUI.** It validates before writing.
-- **CLI**: `nfw-config` (planned) or edit `/var/lib/nfw/config/active.json`
-  and run `systemctl restart nfw-configd`.
-- **Never** edit `/etc/nftables.conf` by hand — it's generated. Edit
-  firewall rules in the GUI and apply.
+- **CLI**: edit `/var/lib/nfw/config/active.json` and run
+  `systemctl restart nfw-configd`.
+- **Never** edit `/etc/nftables.conf` by hand — it's generated.
 
 ---
 
@@ -439,7 +495,9 @@ Systemd units:
 | `nfw-portal.service` | Captive portal |
 | `nfw-firstboot.service` | First-boot bootstrap (image installs) |
 | `nfw-console.service` | Console menu on tty1 |
-| `nfw-*.timer` | Scheduled tasks (aliases, certs, RRD, ...) |
+| `nfw-fix-nfw-perms.service` | `/var/lib/nfw` permission enforcement |
+| `nfw-fix-ca-perms.service` | CA material enforcement |
+| `nfw-*.timer` | Scheduled tasks |
 
 ---
 
@@ -471,13 +529,6 @@ Dry-run the installer:
 sudo bash install.sh --dry-run
 ```
 
-Test an upgrade without touching the install:
-
-```bash
-cp -a /opt/nfw /tmp/nfw-test
-sudo NFW_SOURCE=/tmp/nfw-test bash install.sh --dry-run
-```
-
 ### Migrations
 
 Schema changes to the config format go in `migrations/<from>_to_<to>.sh`.
@@ -506,6 +557,10 @@ NFW treats the firewall as a security boundary, and treats itself the same way.
   `LoadCredential=` (copies into a tmpfs owned by the service user)
 - **CA material** is never group-readable. Per-file perms are enforced at
   every boot by `nfw-fix-ca-perms.service`
+- **`/var/lib/nfw` tree** is `root:nfw 0750`, enforced at every boot by
+  `nfw-fix-nfw-perms.service`
+- **Power actions** are named `power.*` (not `system.*`) so the API can call
+  them. Access is gated by `require_acl("admin")` at the API layer.
 - **The GUI is LAN-only** by design. Do not expose port 8443 to the internet.
   Use a VPN to reach it remotely.
 
@@ -533,12 +588,41 @@ Two known causes:
 - bcrypt hash key mismatch. Check `grep '"hash"' /etc/nfw/users.json`. The
   key must be `"hash"`, not `"password_hash"`.
 
-### Services not starting after upgrade
+### Wizard reappears after setup
+
+Check permissions on the config directory. The API user must be able to
+traverse it:
 
 ```bash
-sudo journalctl -u nfw-api -n 50
-sudo ls /opt/nfw/.backups/     # rollback if needed
+sudo chown root:nfw /var/lib/nfw/config
+sudo chmod 0750 /var/lib/nfw/config
+sudo systemctl restart nfw-fix-nfw-perms.service
 ```
+
+### Alerts not sending
+
+Test the SMTP path directly:
+
+```bash
+# In the GUI: System → Alerts → Send test email
+# Or CLI:
+python3 -c "
+import socket, json
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.settimeout(30)
+s.connect('/run/nfw/configd.sock')
+s.sendall((json.dumps({'action':'alerts.test','data':{}})+'\n').encode())
+buf=b''
+while not buf.endswith(b'\n'):
+    c=s.recv(4096); buf+=c
+print(json.loads(buf))
+"
+```
+
+Check the error message in the response, and review recent alerts at
+`System → Alerts → Recent alerts`. Common issues: wrong port for
+STARTTLS (587) vs implicit SSL (465), or an SMTP provider blocking the
+"from" address.
 
 ### Captive portal popup not showing
 
@@ -550,6 +634,12 @@ unauthenticated clients. If the popup isn't firing:
 2. Verify no CPD hostnames are in the walled garden
 3. Wait — some OSes only probe on network changes
 
+### Live log shows only drops
+
+Drops are always logged. Accepts/rejects appear only for user rules with
+`Log` enabled. Toggle `Log` on a rule in `Firewall → Rules` to see its
+traffic.
+
 ### "Setup pending" error after upgrade
 
 The wizard marker should not survive an upgrade. If it does:
@@ -559,12 +649,18 @@ sudo rm /var/lib/nfw/config/setup_pending
 sudo systemctl restart nfw-api
 ```
 
+### WebSocket reconnect storm in the log
+
+`journalctl -u nfw-api | grep 'WebSocket.*403'` shows a browser retrying
+a stale session every few seconds. Log out and log back in — this is a
+known symptom of the in-memory session store losing state on API restart.
+
 ---
 
 ## Roadmap
 
 **v0.1.x — current**
-- ✅ Firewall rules, NAT, aliases
+- ✅ Firewall rules, NAT, aliases, per-rule counters
 - ✅ Multi-WAN gateways
 - ✅ Captive portal (vouchers, bypass, shaping, RFC 8910/8908)
 - ✅ FreeRADIUS
@@ -572,14 +668,19 @@ sudo systemctl restart nfw-api
 - ✅ WireGuard / OpenVPN / IPsec
 - ✅ First-run wizard
 - ✅ Upgrade system with rollback
+- ✅ Live log viewer (WebSocket)
+- ✅ SMTP alerts
+- ✅ Users GUI management
+- ✅ System power page
 
 **v0.2.x — next**
+- [ ] Persistent session store (currently in-memory; users log out on API restart)
 - [ ] DHCP Kea v4/v6 (replace EOL ISC dhcpd)
-- [ ] Live log viewer (`Firewall → Live Log`)
 - [ ] Dashboard widget framework
-- [ ] Per-rule byte/packet counters
 - [ ] Setup-mode WAN GUI access (bootstrap wizard from any interface)
-- [ ] Single-click repo-to-install URL (public distribution)
+- [ ] DNS blocklists (Pi-hole parity)
+- [ ] Cert-expiring alert hook wired into CA autorenew
+- [ ] WebSocket client: stop retrying on 4401 close
 
 **v0.3.x — planned**
 - [ ] High availability (CARP-equivalent + conntrackd)
@@ -587,6 +688,7 @@ sudo systemctl restart nfw-api
 - [ ] IPv6 captive portal (dual-stack)
 - [ ] Multi-zone captive portal (per-interface policies)
 - [ ] Configuration backup to cloud (S3, WebDAV)
+- [ ] Schedule / cron GUI
 
 **Long-term**
 - [ ] ISO installer (live-boot → install to disk)
