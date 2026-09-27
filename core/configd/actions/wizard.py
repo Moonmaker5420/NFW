@@ -65,6 +65,11 @@ def wizard_complete(data: dict[str, Any]) -> dict[str, Any]:
       - removes /var/lib/nfw/config/setup_pending
       - commits a new config revision
     """
+    # Refuse if setup is already complete — otherwise a logged-in admin
+    # could accidentally re-run the wizard and reset their password.
+    if not os.path.exists(MARKER):
+        return {"ok": False, "error": "setup already complete"}
+
     hostname = (data.get("hostname") or "").strip()
     timezone = (data.get("timezone") or "UTC").strip() or "UTC"
     new_pw = data.get("admin_password") or ""

@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from starlette.requests import Request
@@ -29,6 +29,12 @@ class CompleteBody(BaseModel):
 
 @router.get("/wizard", response_class=HTMLResponse)
 async def wizard_page(request: Request):
+    # Setup must be pending. Once the marker is gone, the wizard is a
+    # trap — the form would reset hostname, timezone, and admin password
+    # if someone submitted it. Send them to the dashboard instead.
+    import os
+    if not os.path.exists("/var/lib/nfw/config/setup_pending"):
+        return RedirectResponse(url="/", status_code=302)
     return templates.TemplateResponse(request, "wizard.html", {})
 
 
