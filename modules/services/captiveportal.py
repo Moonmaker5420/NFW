@@ -1171,6 +1171,22 @@ def _lan_iface_from_listen_ip() -> str:
     return ""
 
 
+def _cp_enabled() -> bool:
+    """True if captive portal is enabled in config.
+
+    The ARP-scan feature (kind='unauthenticated') and the sessions list
+    should return empty when CP is off — otherwise the GUI shows
+    unauthenticated LAN clients as if they were portal sessions.
+    """
+    try:
+        from config import store as _cfg
+        svc = (_cfg.read().get("services", {})
+               .get("captiveportal_config", {}) or {})
+        return bool(svc.get("enabled"))
+    except Exception:
+        return False
+
+
 def _list_unauthenticated(now: int, q: str, limit: int) -> list[dict]:
     """Return ARP-known LAN clients with no active captive portal session.
 
@@ -1270,6 +1286,11 @@ def list_sessions_filtered(kind: str = "all", q: str = "",
     authenticated sessions (unauth rows appended after sessions).
     """
     now = int(time.time())
+
+    # If captive portal is disabled, there are no sessions of any kind.
+    # Belt-and-suspenders: skip both the DB query and the ARP scan.
+    if not _cp_enabled():
+        return []
 
     # Special case: unauthenticated only
     if kind == "unauthenticated":
