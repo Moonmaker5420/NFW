@@ -162,6 +162,12 @@ async def page_users(request: Request, user: Session = Depends(current_user)):
     return _render(request, "system/users.html", **_ctx(request, user))
 
 
+@router.get("/system/power", response_class=HTMLResponse)
+async def page_system_power(request: Request,
+                            user: Session = Depends(current_user)):
+    return _render(request, "system/power.html", **_ctx(request, user))
+
+
 @router.get("/system/alerts", response_class=HTMLResponse)
 async def page_system_alerts(request: Request,
                              user: Session = Depends(current_user)):

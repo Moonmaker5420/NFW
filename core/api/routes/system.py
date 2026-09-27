@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from pydantic import BaseModel
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from ..auth import Session
@@ -111,3 +112,28 @@ async def alerts_test(body: dict = Body(default={}),
 async def alerts_history(limit: int = 50,
                          user: Session = Depends(require_acl("readonly"))):
     return await _cd("alerts.history", {"limit": limit})
+
+# =========================================================================
+# Power actions
+# =========================================================================
+class PowerBody(BaseModel):
+    delay_seconds: int = 5
+
+
+@router.post("/power/reboot")
+async def power_reboot(body: PowerBody = Body(default=PowerBody()),
+                       user: Session = Depends(require_acl("admin"))):
+    return await _cd("power.reboot",
+                     {"delay_seconds": body.delay_seconds})
+
+
+@router.post("/power/shutdown")
+async def power_shutdown(body: PowerBody = Body(default=PowerBody()),
+                         user: Session = Depends(require_acl("admin"))):
+    return await _cd("power.shutdown",
+                     {"delay_seconds": body.delay_seconds})
+
+
+@router.post("/power/cancel")
+async def power_cancel(user: Session = Depends(require_acl("admin"))):
+    return await _cd("power.cancel")

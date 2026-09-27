@@ -38,6 +38,7 @@ from configd.actions import (
     network,
     network_discover,
     network_iface,
+    power,
     radius,
     reporting,
     schedules,
