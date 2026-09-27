@@ -1,30 +1,514 @@
 {% extends "base.html" %}
-{% block title %}Users{% endblock %}
 {% block content %}
-<h1>Users</h1>
-<p class="subtitle">Console user accounts</p>
+<h2>Users</h2>
+<p class="muted" style="margin-top:0">Console user accounts and access control.</p>
+
 <div class="card">
-  <div id="users"><div class="muted">Loading…</div></div>
+  <div class="row between" style="margin-bottom:12px;align-items:center">
+    <h3 style="margin:0">User Accounts</h3>
+    <div class="row" style="gap:8px">
+      <button id="u-self-pw" class="secondary">Change my password</button>
+      <button id="u-add" class="primary">Add user</button>
+    </div>
+  </div>
+
+  <div id="u-tbl"><div class="muted">Loading…</div></div>
+
+  <p class="muted" style="margin-top:12px;font-size:12px;line-height:1.5">
+    <b>Roles:</b> <b>admin</b> — full access. <b>operator</b> — can apply
+    changes but not manage users or system security. <b>readonly</b> — view
+    only. Password change is self-service for your own account; admins can
+    reset any user's password.
+  </p>
 </div>
-{% endblock %}
-{% block scripts %}
-<script>
-document.addEventListener('DOMContentLoaded', async () => {
-  try {
-    const r = await nfw.api.get('/api/users/');
-    const list = r.users || [];
-    const html = list.map(u => `
-      <tr>
-        <td class="mono">${esc(u.username)}</td>
-        <td><span class="badge info">${esc(u.role)}</span></td>
-        <td>${u.disabled ? '<span class="badge err">disabled</span>' : '<span class="badge ok">active</span>'}</td>
-      </tr>`).join('');
-    document.getElementById('users').innerHTML =
-      '<table class="data"><thead><tr><th>Username</th><th>Role</th><th>Status</th></tr></thead><tbody>' + html + '</tbody></table>';
-  } catch (e) {
-    document.getElementById('users').innerHTML = `<div class="muted">${esc(e.message)}</div>`;
+
+<style>
+  #u-tbl table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  #u-tbl th, #u-tbl td {
+    text-align: left; padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
   }
-});
-function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+  #u-tbl th {
+    color: var(--fg-mute); font-weight: 500; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  #u-tbl td.mono { font-family: ui-monospace, monospace; }
+  #u-tbl tr:last-child td { border-bottom: none; }
+  .u-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .u-actions button {
+    padding: 3px 8px; font-size: 11px; border-radius: 4px;
+  }
+  .badge-self { opacity: 0.6; font-size: 10px; margin-left: 6px;
+                color: var(--fg-mute); }
+  .u-form label { display: block; margin-bottom: 12px; }
+  .u-form label > span { display: block; font-size: 12px;
+                          color: var(--fg-dim); margin-bottom: 4px; }
+  .u-form input, .u-form select {
+    width: 100%; padding: 8px 10px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; color: var(--fg); font-size: 14px;
+  }
+  .u-form input:focus, .u-form select:focus { border-color: var(--accent); }
+  .u-secret {
+    font-family: ui-monospace, monospace; font-size: 13px;
+    background: var(--bg); padding: 10px 12px; border-radius: 6px;
+    border: 1px solid var(--border); word-break: break-all;
+    margin-bottom: 12px;
+  }
+  .u-recovery {
+    font-family: ui-monospace, monospace; font-size: 12px;
+    background: var(--bg); padding: 10px 12px; border-radius: 6px;
+    border: 1px solid var(--border); white-space: pre; overflow-x: auto;
+    margin-bottom: 12px;
+  }
+</style>
+
+<script>
+(function () {
+  var CURRENT_USER = "{{ user.username }}";
+  var CURRENT_ROLE = "{{ user.role }}";
+
+  // ---- tiny DOM helpers ----
+  function el(tag, attrs, children) {
+    var e = document.createElement(tag);
+    if (attrs) for (var k in attrs) {
+      if (k === 'class') e.className = attrs[k];
+      else if (k.startsWith('on') && typeof attrs[k] === 'function')
+        e.addEventListener(k.slice(2), attrs[k]);
+      else e.setAttribute(k, attrs[k]);
+    }
+    (children || []).forEach(function (c) {
+      if (typeof c === 'string') e.appendChild(document.createTextNode(c));
+      else if (c) e.appendChild(c);
+    });
+    return e;
+  }
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ---- API helper (fetch so we don't depend on nfw.api.delete) ----
+  async function api(method, url, body) {
+    var opts = { method: method, credentials: 'same-origin', headers: {} };
+    if (body !== undefined) {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.body = JSON.stringify(body);
+    }
+    var r = await fetch(url, opts);
+    var data = {};
+    try { data = await r.json(); } catch (e) {}
+    if (!r.ok) {
+      var msg = data.detail || data.error || ('HTTP ' + r.status);
+      throw new Error(msg);
+    }
+    return data;
+  }
+
+  // ---- confirm modal ----
+  function confirmModal(title, message, confirmLabel, onConfirm) {
+    var body = el('div', {}, [el('p', { style: 'margin:0 0 4px' }, [message])]);
+    nfw.modal.open({
+      title: title,
+      body: body,
+      actions: [
+        { label: 'Cancel', onClick: function (ev, close) { close(); } },
+        { label: confirmLabel || 'Confirm', className: 'danger',
+          onClick: async function (ev, close) {
+            try { await onConfirm(); close(); }
+            catch (e) { nfw.toast.err(e.message); }
+          }
+        }
+      ]
+    });
+  }
+
+  // ---- form field helper ----
+  function field(label, input) {
+    return el('label', {}, [el('span', {}, [label]), input]);
+  }
+  function textInput(placeholder, type, value) {
+    var i = el('input', { type: type || 'text', placeholder: placeholder || '',
+                          value: value || '' });
+    return i;
+  }
+  function selectInput(options, selected) {
+    var s = el('select', {});
+    options.forEach(function (o) {
+      var opt = el('option', { value: o }, [o]);
+      if (o === selected) opt.selected = true;
+      s.appendChild(opt);
+    });
+    return s;
+  }
+
+  // ---- modals ----
+  function openAddUser(reload) {
+    var u  = textInput('username');
+    var p1 = textInput('min 6 chars', 'password');
+    var p2 = textInput('confirm', 'password');
+    var r  = selectInput(['readonly','operator','admin'], 'readonly');
+
+    var body = el('div', { class: 'u-form' }, [
+      field('Username', u),
+      field('Password', p1),
+      field('Confirm password', p2),
+      field('Role', r),
+    ]);
+
+    nfw.modal.open({
+      title: 'Add user',
+      body: body,
+      actions: [
+        { label: 'Cancel', onClick: function (ev, close) { close(); } },
+        { label: 'Create', className: 'primary',
+          onClick: async function (ev, close) {
+            var username = u.value.trim();
+            if (!username) { nfw.toast.err('username required'); return; }
+            if (p1.value.length < 6) { nfw.toast.err('password min 6 chars'); return; }
+            if (p1.value !== p2.value) { nfw.toast.err('passwords do not match'); return; }
+            try {
+              await api('POST', '/api/users/',
+                        { username: username, password: p1.value, role: r.value });
+              nfw.toast.ok('Created ' + username);
+              close(); reload();
+            } catch (e) { nfw.toast.err(e.message); }
+          }
+        }
+      ]
+    });
+  }
+
+  function openChangePassword(username, isSelf, reload) {
+    var p1 = textInput('min 6 chars', 'password');
+    var p2 = textInput('confirm', 'password');
+    var body = el('div', { class: 'u-form' }, [
+      el('p', { class: 'muted', style: 'margin:0 0 12px;font-size:13px' },
+         ['Set a new password for ', el('b', {}, [username]), '.']),
+      field('New password', p1),
+      field('Confirm password', p2),
+    ]);
+
+    nfw.modal.open({
+      title: (isSelf ? 'Change my password' : 'Reset password — ' + username),
+      body: body,
+      actions: [
+        { label: 'Cancel', onClick: function (ev, close) { close(); } },
+        { label: 'Save', className: 'primary',
+          onClick: async function (ev, close) {
+            if (p1.value.length < 6) { nfw.toast.err('password min 6 chars'); return; }
+            if (p1.value !== p2.value) { nfw.toast.err('passwords do not match'); return; }
+            try {
+              await api('POST',
+                        '/api/users/' + encodeURIComponent(username) + '/password',
+                        { password: p1.value });
+              nfw.toast.ok('Password updated');
+              close();
+              if (reload) reload();
+            } catch (e) { nfw.toast.err(e.message); }
+          }
+        }
+      ]
+    });
+  }
+
+  function openChangeRole(username, currentRole, reload) {
+    var r = selectInput(['readonly','operator','admin'], currentRole);
+    var body = el('div', { class: 'u-form' }, [
+      el('p', { class: 'muted', style: 'margin:0 0 12px;font-size:13px' },
+         ['Role for ', el('b', {}, [username]), '.']),
+      field('Role', r),
+    ]);
+    nfw.modal.open({
+      title: 'Change role — ' + username,
+      body: body,
+      actions: [
+        { label: 'Cancel', onClick: function (ev, close) { close(); } },
+        { label: 'Save', className: 'primary',
+          onClick: async function (ev, close) {
+            try {
+              await api('POST',
+                        '/api/users/' + encodeURIComponent(username) + '/role',
+                        { role: r.value });
+              nfw.toast.ok('Role updated');
+              close(); reload();
+            } catch (e) { nfw.toast.err(e.message); }
+          }
+        }
+      ]
+    });
+  }
+
+  async function open2FA(username, status, reload) {
+    var enabled = !!(status && status.totp_enabled);
+
+    if (enabled) {
+      // Offer disable + regeneration of recovery codes
+      var body = el('div', { class: 'u-form' }, [
+        el('p', { class: 'muted', style: 'margin:0 0 12px;font-size:13px' },
+           ['Two-factor authentication is ', el('b', {}, ['enabled']),
+            ' for ', el('b', {}, [username]), '.']),
+      ]);
+      nfw.modal.open({
+        title: '2FA — ' + username,
+        body: body,
+        actions: [
+          { label: 'Close', onClick: function (ev, close) { close(); } },
+          { label: 'Regenerate recovery codes',
+            onClick: async function (ev, close) {
+              try {
+                var r = await api('POST',
+                  '/api/users/' + encodeURIComponent(username) + '/2fa/recovery');
+                close();
+                showRecovery(username, r);
+              } catch (e) { nfw.toast.err(e.message); }
+            }
+          },
+          { label: 'Disable 2FA', className: 'danger',
+            onClick: async function (ev, close) {
+              if (!confirm('Disable 2FA for ' + username + '?')) return;
+              try {
+                await api('POST',
+                  '/api/users/' + encodeURIComponent(username) + '/2fa/disable');
+                nfw.toast.ok('2FA disabled');
+                close(); reload();
+              } catch (e) { nfw.toast.err(e.message); }
+            }
+          }
+        ]
+      });
+      return;
+    }
+
+    // Not enabled — run the setup flow
+    var setup;
+    try {
+      setup = await api('POST',
+        '/api/users/' + encodeURIComponent(username) + '/2fa/setup');
+    } catch (e) {
+      nfw.toast.err('setup failed: ' + e.message);
+      return;
+    }
+
+    var secret = setup.secret || setup.totp_secret || '';
+    var uri = setup.uri || setup.otpauth_uri || '';
+
+    var code = textInput('6-digit code', 'text');
+
+    var body = el('div', { class: 'u-form' }, [
+      el('p', { class: 'muted', style: 'margin:0 0 8px;font-size:13px' },
+         ['1. Add this secret to your authenticator app:']),
+      el('div', { class: 'u-secret' }, [secret]),
+    ]);
+    if (uri) {
+      body.appendChild(el('p', { class: 'muted',
+        style: 'margin:0 0 4px;font-size:12px' }, ['otpauth URI (for manual entry):']));
+      body.appendChild(el('div', { class: 'u-secret',
+        style: 'font-size:11px' }, [uri]));
+    }
+    body.appendChild(el('p', { class: 'muted',
+      style: 'margin:12px 0 8px;font-size:13px' },
+      ['2. Enter the current 6-digit code to confirm:']));
+    body.appendChild(field('Verification code', code));
+
+    nfw.modal.open({
+      title: 'Enable 2FA — ' + username,
+      body: body,
+      actions: [
+        { label: 'Cancel', onClick: function (ev, close) { close(); } },
+        { label: 'Verify & enable', className: 'primary',
+          onClick: async function (ev, close) {
+            var c = code.value.trim();
+            if (!/^\d{6}$/.test(c)) { nfw.toast.err('enter 6 digits'); return; }
+            try {
+              var r = await api('POST',
+                '/api/users/' + encodeURIComponent(username) + '/2fa/enable',
+                { code: c });
+              close();
+              nfw.toast.ok('2FA enabled');
+              // If the response carries recovery codes, show them
+              if (r && (r.recovery_codes || r.codes)) {
+                showRecovery(username, r);
+              }
+              reload();
+            } catch (e) { nfw.toast.err(e.message); }
+          }
+        }
+      ]
+    });
+  }
+
+  function showRecovery(username, r) {
+    var codes = r.recovery_codes || r.codes || [];
+    var list = Array.isArray(codes) ? codes.join('\n') : String(codes);
+    var body = el('div', { class: 'u-form' }, [
+      el('p', { class: 'muted', style: 'margin:0 0 8px;font-size:13px' },
+         ['Save these recovery codes for ', el('b', {}, [username]),
+          '. They will not be shown again.']),
+      el('div', { class: 'u-recovery' }, [list]),
+    ]);
+    nfw.modal.open({
+      title: 'Recovery codes',
+      body: body,
+      actions: [
+        { label: 'Close', className: 'primary',
+          onClick: function (ev, close) { close(); } }
+      ]
+    });
+  }
+
+  function toggleDisabled(username, disabled, reload) {
+    var verb = disabled ? 'Enable' : 'Disable';
+    confirmModal(verb + ' user',
+      verb + ' ' + username + '?',
+      verb,
+      async function () {
+        await api('POST',
+          '/api/users/' + encodeURIComponent(username) + '/disabled',
+          { disabled: !disabled });
+        nfw.toast.ok(username + ' ' + (disabled ? 'enabled' : 'disabled'));
+        reload();
+      });
+  }
+
+  function deleteUser(username, reload) {
+    confirmModal('Delete user',
+      'Delete ' + username + '? This cannot be undone.',
+      'Delete',
+      async function () {
+        await api('DELETE', '/api/users/' + encodeURIComponent(username));
+        nfw.toast.ok('Deleted ' + username);
+        reload();
+      });
+  }
+
+  // ---- render ----
+  async function load() {
+    var container = document.getElementById('u-tbl');
+    container.innerHTML = '<div class="muted">Loading…</div>';
+
+    var r;
+    try { r = await api('GET', '/api/users/'); }
+    catch (e) {
+      container.innerHTML = '<div class="muted">error: ' + esc(e.message) + '</div>';
+      return;
+    }
+
+    var users = r.users || r;
+    if (Array.isArray(users)) {
+      // [{username, role, disabled, ...}]
+    } else if (typeof users === 'object') {
+      // {username: {...}}
+      users = Object.keys(users).map(function (k) {
+        return Object.assign({ username: k }, users[k]);
+      });
+    } else {
+      users = [];
+    }
+
+    if (!users.length) {
+      container.innerHTML = '<div class="muted">No users.</div>';
+      return;
+    }
+
+    var html = ['<table><thead><tr>',
+      '<th>Username</th><th>Role</th><th>Status</th><th>2FA</th>',
+      '<th style="text-align:right">Actions</th>',
+      '</tr></thead><tbody>'];
+
+    users.forEach(function (u) {
+      var uname = u.username || u.name || '?';
+      var role = u.role || 'readonly';
+      var disabled = !!u.disabled;
+      var isSelf = (uname === CURRENT_USER);
+
+      // Best-effort 2FA indicator from list payload
+      var totp = u.totp_enabled ? 'on' : (u.totp_required ? 'required' : '—');
+
+      var roleBadge = '<span class="badge ' +
+        (role === 'admin' ? 'warn' : role === 'operator' ? 'info' : '') +
+        '">' + esc(role) + '</span>';
+      var statusBadge = disabled
+        ? '<span class="badge">disabled</span>'
+        : '<span class="badge ok">active</span>';
+      var totpBadge = totp === 'on'
+        ? '<span class="badge ok">on</span>'
+        : totp === 'required'
+        ? '<span class="badge warn">required</span>'
+        : '<span class="muted">—</span>';
+
+      var acts = [];
+      acts.push('<button class="small" data-act="pw" data-u="' + esc(uname) +
+                '" data-self="' + (isSelf ? '1' : '0') + '">' +
+                (isSelf ? 'Change password' : 'Reset password') + '</button>');
+      acts.push('<button class="small" data-act="2fa" data-u="' + esc(uname) +
+                '">2FA</button>');
+      if (CURRENT_ROLE === 'admin') {
+        if (!isSelf) {
+          acts.push('<button class="small" data-act="role" data-u="' + esc(uname) +
+                    '" data-r="' + esc(role) + '">Role</button>');
+          acts.push('<button class="small ' + (disabled ? '' : 'danger') +
+                    '" data-act="toggle" data-u="' + esc(uname) +
+                    '" data-disabled="' + (disabled ? '1' : '0') + '">' +
+                    (disabled ? 'Enable' : 'Disable') + '</button>');
+          acts.push('<button class="small danger" data-act="del" data-u="' +
+                    esc(uname) + '">Delete</button>');
+        }
+      }
+
+      html.push('<tr>');
+      html.push('<td class="mono">' + esc(uname) +
+                (isSelf ? '<span class="badge-self">you</span>' : '') + '</td>');
+      html.push('<td>' + roleBadge + '</td>');
+      html.push('<td>' + statusBadge + '</td>');
+      html.push('<td>' + totpBadge + '</td>');
+      html.push('<td style="text-align:right"><div class="u-actions">' +
+                acts.join('') + '</div></td>');
+      html.push('</tr>');
+    });
+
+    html.push('</tbody></table>');
+    container.innerHTML = html.join('');
+
+    // Wire row actions
+    container.querySelectorAll('button[data-act]').forEach(function (b) {
+      b.addEventListener('click', async function () {
+        var act = b.getAttribute('data-act');
+        var uname = b.getAttribute('data-u');
+        if (act === 'pw') {
+          openChangePassword(uname, b.getAttribute('data-self') === '1', load);
+        } else if (act === 'role') {
+          openChangeRole(uname, b.getAttribute('data-r'), load);
+        } else if (act === 'toggle') {
+          toggleDisabled(uname, b.getAttribute('data-disabled') === '1', load);
+        } else if (act === 'del') {
+          deleteUser(uname, load);
+        } else if (act === '2fa') {
+          b.disabled = true;
+          try {
+            var st = await api('GET',
+              '/api/users/' + encodeURIComponent(uname) + '/2fa');
+            await open2FA(uname, st, load);
+          } catch (e) {
+            nfw.toast.err(e.message);
+          } finally {
+            b.disabled = false;
+          }
+        }
+      });
+    });
+  }
+
+  document.getElementById('u-add').addEventListener('click', function () {
+    if (CURRENT_ROLE !== 'admin') { nfw.toast.err('admin required'); return; }
+    openAddUser(load);
+  });
+  document.getElementById('u-self-pw').addEventListener('click', function () {
+    openChangePassword(CURRENT_USER, true, null);
+  });
+
+  load();
+})();
 </script>
 {% endblock %}
