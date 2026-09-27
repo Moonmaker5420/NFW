@@ -1,6 +1,6 @@
 <div align="center">
 
-# NFW — Next Firewall
+# NFW — Nexus Firewall
 
 **An OPNsense-style firewall for any Debian or Ubuntu server.**
 
