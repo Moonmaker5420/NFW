@@ -131,3 +131,81 @@ async def ws_stats(ws: WebSocket):
         except Exception:
             pass
     LOG.info("ws stats: client disconnected")
+
+# ---------------------------------------------------------------------------
+# Live firewall log stream
+# ---------------------------------------------------------------------------
+@router.websocket("/api/firewall/livelog/ws")
+async def ws_livelog(ws: WebSocket):
+    """Stream firewall log entries over WebSocket.
+
+    Protocol:
+      - On connect, sends: {"type": "snapshot", "entries": [...]}
+      - Then every 1s:     {"type": "append",   "entries": [...]}
+      - Every 30s:         {"type": "ping"}
+      - Client sends:      {"filter": {"kind": "...", "scope": "...", "q": "..."}}
+        (applied client-side; server always sends all entries)
+    """
+    if session_from_request(ws) is None:
+        await ws.close(code=4401)
+        return
+
+    await ws.accept()
+    LOG.info("ws livelog: client connected")
+
+    import sys
+    sys.path.insert(0, "/opt/nfw")
+    from modules.firewall.livelog import reader
+
+    # Initial snapshot — last 100 entries
+    try:
+        snap = await reader.snapshot(limit=100)
+        await ws.send_text(json.dumps({
+            "type": "snapshot",
+            "entries": snap.get("entries", []),
+            "total": snap.get("total", 0),
+        }))
+    except Exception as e:
+        LOG.warning("ws livelog: initial snapshot failed: %s", e)
+
+    last_ts = time.time()
+    last_ping = time.time()
+    watcher = asyncio.create_task(_recv_watcher(ws))
+
+    try:
+        while not watcher.done():
+            await asyncio.sleep(1)
+            if watcher.done():
+                break
+
+            # Push any new entries since last send
+            try:
+                new_entries = await reader.tail_after(last_ts)
+            except Exception as e:
+                LOG.warning("ws livelog: tail failed: %s", e)
+                new_entries = []
+
+            if new_entries:
+                last_ts = new_entries[-1].ts
+                try:
+                    await ws.send_text(json.dumps({
+                        "type": "append",
+                        "entries": [e.to_dict() for e in new_entries],
+                    }))
+                except (WebSocketDisconnect, RuntimeError):
+                    break
+
+            # Heartbeat every 30s to keep proxies from closing idle conns
+            now = time.time()
+            if now - last_ping >= 30:
+                try:
+                    await ws.send_text(json.dumps({"type": "ping"}))
+                except (WebSocketDisconnect, RuntimeError):
+                    break
+                last_ping = now
+    except Exception as e:
+        LOG.exception("ws livelog error: %s", e)
+    finally:
+        if not watcher.done():
+            watcher.cancel()
+        LOG.info("ws livelog: client disconnected")
