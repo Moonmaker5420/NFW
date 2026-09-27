@@ -1,0 +1,13 @@
+[Unit]
+Description=NFW RRD metric collector
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/sbin/nfw-rrd-collector.py
+User=root
+Group=nfw
+ProtectSystem=full
+ReadWritePaths=/var/lib/nfw/rrd
+ProtectHome=yes
+PrivateTmp=yes

@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}1:1 NAT{% endblock %}
+{% block content %}
+<h1>1:1 NAT</h1>
+<p class="subtitle">Bidirectional static NAT (binat). One external IP ↔ one internal IP.</p>
+
+{% include "nat/_tabs.html" %}
+
+<div class="row between" style="margin-bottom:12px">
+  <button id="add-btn" class="small">+ Add mapping</button>
+  <div class="row">
+    <button id="apply-btn" class="primary">Save &amp; Apply</button>
+    <button id="refresh-btn">Refresh</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Mappings</h2>
+  <div id="tbl"><div class="muted">Loading…</div></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let ITEMS = [];
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+async function load() {
+  try {
+    ITEMS = (await nfw.api.get('/api/firewall/nat/one-to-one')).one_to_one || [];
+    render();
+  } catch (e) { nfw.toast.err(e.message); }
+}
+
+function render() {
+  if (ITEMS.length === 0) {
+    document.getElementById('tbl').innerHTML = '<div class="muted">No 1:1 mappings yet</div>';
+    return;
+  }
+  const rows = ITEMS.map(p => `
+    <tr>
+      <td style="width:36px"><input type="checkbox" ${p.enabled !== false ? 'checked' : ''} data-toggle="${esc(p.id)}" style="width:auto"></td>
+      <td class="mono">${esc(p.external_ip)}</td>
+      <td class="mono">↔ ${esc(p.internal_ip)}</td>
+      <td><span class="badge ${p.reflection !== false ? 'info' : ''}">${p.reflection !== false ? 'reflection' : 'no refl.'}</span></td>
+      <td>${esc(p.description || '')}</td>
+      <td style="width:120px">
+        <button class="small" data-edit="${esc(p.id)}">Edit</button>
+        <button class="small danger" data-del="${esc(p.id)}">Del</button>
+      </td>
+    </tr>`).join('');
+  document.getElementById('tbl').innerHTML =
+    '<table class="data"><thead><tr><th>On</th><th>External IP</th><th>Internal IP</th><th>Reflection</th><th>Description</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+  bind();
+}
+
+function bind() {
+  document.querySelectorAll('[data-toggle]').forEach(el => el.addEventListener('change', async () => {
+    try { await nfw.api.post('/api/firewall/nat/one-to-one/' + el.getAttribute('data-toggle') + '/toggle'); load(); }
+    catch (e) { nfw.toast.err(e.message); }
+  }));
+  document.querySelectorAll('[data-del]').forEach(el => el.addEventListener('click', async () => {
+    if (!confirm('Delete this mapping?')) return;
+    try { await nfw.api.del('/api/firewall/nat/one-to-one/' + el.getAttribute('data-del')); nfw.toast.ok('Deleted'); load(); }
+    catch (e) { nfw.toast.err(e.message); }
+  }));
+  document.querySelectorAll('[data-edit]').forEach(el => el.addEventListener('click', () => edit(el.getAttribute('data-edit'))));
+}
+
+function edit(id) {
+  const p = id ? ITEMS.find(x => x.id === id)
+               : {external_ip:'', internal_ip:'', reflection:true, description:'', enabled:true};
+  const html = `
+    <label class="field"><span>Description</span><input type="text" name="description" value="${esc(p.description||'')}"></label>
+    <label class="field"><span>External IP (WAN side)</span><input type="text" name="external_ip" placeholder="203.0.113.10" value="${esc(p.external_ip||'')}"></label>
+    <label class="field"><span>Internal IP (LAN side)</span><input type="text" name="internal_ip" placeholder="192.168.10.50" value="${esc(p.internal_ip||'')}"></label>
+    <label class="row" style="gap:6px;margin-top:8px"><input type="checkbox" name="reflection" ${p.reflection !== false ? 'checked' : ''}> Enable NAT reflection (hairpin) for this mapping</label>
+    <label class="row" style="gap:6px;margin-top:4px"><input type="checkbox" name="enabled" ${p.enabled !== false ? 'checked' : ''}> Enabled</label>
+  `;
+
+  nfw.modal.open({
+    title: id ? 'Edit 1:1 mapping' : 'New 1:1 mapping',
+    body: html,
+    actions: [
+      { label: 'Cancel', onClick: (e, close) => close() },
+      { label: 'Save', className: 'primary', onClick: async (e, close) => {
+          const m = document.querySelector('.modal');
+          const body = {};
+          m.querySelectorAll('[name]').forEach(el => {
+            body[el.name] = el.type === 'checkbox' ? el.checked : el.value;
+          });
+          try {
+            if (id) await nfw.api.put('/api/firewall/nat/one-to-one/' + id, {binat: body});
+            else    await nfw.api.post('/api/firewall/nat/one-to-one', {binat: body});
+            nfw.toast.ok('Saved (staged) — Apply to activate');
+            close();
+            load();
+          } catch (err) { nfw.toast.err(err.message); }
+        }
+      },
+    ],
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  load();
+  document.getElementById('refresh-btn').addEventListener('click', load);
+  document.getElementById('add-btn').addEventListener('click', () => edit(null));
+  document.getElementById('apply-btn').addEventListener('click', async () => {
+    if (!confirm('Apply the current ruleset? This reloads nftables.')) return;
+    try {
+      const r = await nfw.api.post('/api/firewall/apply');
+      nfw.toast.ok('Applied (' + (r.bytes || 0) + ' bytes)');
+    } catch (e) { nfw.toast.err(e.message); }
+  });
+});
+</script>
+{% endblock %}

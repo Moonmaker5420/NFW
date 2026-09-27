@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Users{% endblock %}
+{% block content %}
+<h1>Users</h1>
+<p class="subtitle">Console user accounts</p>
+<div class="card">
+  <div id="users"><div class="muted">Loading…</div></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    const r = await nfw.api.get('/api/users/');
+    const list = r.users || [];
+    const html = list.map(u => `
+      <tr>
+        <td class="mono">${esc(u.username)}</td>
+        <td><span class="badge info">${esc(u.role)}</span></td>
+        <td>${u.disabled ? '<span class="badge err">disabled</span>' : '<span class="badge ok">active</span>'}</td>
+      </tr>`).join('');
+    document.getElementById('users').innerHTML =
+      '<table class="data"><thead><tr><th>Username</th><th>Role</th><th>Status</th></tr></thead><tbody>' + html + '</tbody></table>';
+  } catch (e) {
+    document.getElementById('users').innerHTML = `<div class="muted">${esc(e.message)}</div>`;
+  }
+});
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+</script>
+{% endblock %}

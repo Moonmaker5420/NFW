@@ -1,0 +1,305 @@
+{% extends "base.html" %}
+{% block title %}Advanced Interfaces{% endblock %}
+{% block content %}
+<h1>Advanced Interfaces</h1>
+<p class="subtitle">VLANs, bridges, LAGGs, GRE, VXLAN, loopback</p>
+
+<div class="row between" style="margin-bottom:12px">
+  <div class="row">
+    <button id="add-vlan" class="small">+ VLAN</button>
+    <button id="add-bridge" class="small">+ Bridge</button>
+    <button id="add-bond" class="small">+ LAGG / Bond</button>
+    <button id="add-gre" class="small">+ GRE</button>
+    <button id="add-vxlan" class="small">+ VXLAN</button>
+    <button id="add-loopback" class="small">+ Loopback</button>
+  </div>
+  <div class="row">
+    <button id="preview-btn">Preview</button>
+    <button id="apply-btn" class="primary">Save &amp; Apply</button>
+    <button id="refresh">Refresh</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Configured interfaces</h2>
+  <div id="ifaces"><div class="muted">Loading…</div></div>
+</div>
+
+<div class="card">
+  <h2>Live device state</h2>
+  <div id="status"><div class="muted">—</div></div>
+</div>
+
+<div class="card" id="preview-card" style="display:none">
+  <h2>Preview — systemd-networkd config</h2>
+  <pre class="code" id="preview-text" style="max-height:500px"></pre>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+/* NFW Advanced Interfaces — standalone, no external deps */
+(function () {
+  var IFACES = [];
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];
+    });
+  }
+
+  function setText(id, v) {
+    var el = document.getElementById(id);
+    if (el) el.textContent = v;
+  }
+
+  /* -------- Load data -------- */
+  function load() {
+    nfw.api.get('/api/interfaces/advanced').then(function (r) {
+      IFACES = r.interfaces || [];
+      renderIfaces();
+      renderStatus(r.status);
+    }).catch(function (e) {
+      nfw.toast.err(e.message);
+    });
+  }
+
+  function summarize(d) {
+    var k = d.kind;
+    if (k === 'vlan')     return {parent: d.parent, id: d.vlan_id};
+    if (k === 'bridge')   return {members: d.members};
+    if (k === 'bond')     return {members: d.members, mode: d.mode};
+    if (k === 'lagg')     return {members: d.members, mode: d.mode};
+    if (k === 'gre')      return {local: d.local, remote: d.remote};
+    if (k === 'vxlan')    return {vni: d.vni, remote: d.remote};
+    if (k === 'loopback') return {address: d.address};
+    return d;
+  }
+
+  function renderIfaces() {
+    var el = document.getElementById('ifaces');
+    if (!el) return;
+    if (IFACES.length === 0) {
+      el.innerHTML = '<div class="muted">No advanced interfaces configured</div>';
+      return;
+    }
+    var rows = IFACES.map(function (d, i) {
+      return '<tr>'
+        + '<td class="mono">' + esc(d.name) + '</td>'
+        + '<td><span class="badge info">' + esc(d.kind) + '</span></td>'
+        + '<td class="mono" style="font-size:11px">' + esc(JSON.stringify(summarize(d))) + '</td>'
+        + '<td><span class="badge ' + (d.enabled !== false ? 'ok' : 'warn') + '">'
+          + (d.enabled !== false ? 'on' : 'off') + '</span></td>'
+        + '<td style="width:80px"><button class="small danger" data-del="' + i + '">Del</button></td>'
+        + '</tr>';
+    }).join('');
+    el.innerHTML = '<table class="data"><thead><tr><th>Name</th><th>Kind</th><th>Config</th><th>State</th><th></th></tr></thead><tbody>'
+      + rows + '</tbody></table>';
+    var dels = el.querySelectorAll('[data-del]');
+    for (var i = 0; i < dels.length; i++) {
+      dels[i].addEventListener('click', function () {
+        var idx = parseInt(this.getAttribute('data-del'), 10);
+        if (!confirm('Delete interface ' + IFACES[idx].name + '?')) return;
+        nfw.api.del('/api/interfaces/advanced/' + encodeURIComponent(IFACES[idx].name))
+          .then(function () { nfw.toast.ok('Deleted'); load(); })
+          .catch(function (e) { nfw.toast.err(e.message); });
+      });
+    }
+  }
+
+  function renderStatus(st) {
+    var el = document.getElementById('status');
+    if (!el || !st || !st.links) return;
+    var rows = st.links.map(function (l) {
+      return '<tr>'
+        + '<td class="mono">' + esc(l.name) + '</td>'
+        + '<td>' + esc(l.kind) + '</td>'
+        + '<td>' + esc(l.state) + '</td>'
+        + '<td class="mono">' + esc(l.mac) + '</td>'
+        + '<td class="num">' + l.mtu + '</td>'
+        + '</tr>';
+    }).join('');
+    el.innerHTML = '<table class="data"><thead><tr><th>Name</th><th>Type</th><th>State</th><th>MAC</th><th>MTU</th></tr></thead><tbody>'
+      + rows + '</tbody></table>';
+  }
+
+  /* -------- Modal form -------- */
+  function openForm(kind, fields) {
+    if (!Array.isArray(fields)) {
+      alert('internal error: fields not array');
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < fields.length; i++) {
+      var f = fields[i];
+      if (!f || !f.name) continue;
+      var v = (f.default !== undefined) ? f.default : '';
+      if (f.type === 'checkbox') {
+        html += '<label class="row" style="gap:6px;margin:8px 0">'
+          + '<input type="checkbox" name="' + esc(f.name) + '"' + (v ? ' checked' : '') + '> '
+          + esc(f.label || f.name) + '</label>';
+      } else {
+        html += '<label class="field"><span>' + esc(f.label || f.name) + '</span>'
+          + '<input type="' + esc(f.type || 'text') + '" name="' + esc(f.name) + '" '
+          + 'value="' + esc(v) + '" '
+          + (f.placeholder ? 'placeholder="' + esc(f.placeholder) + '"' : '')
+          + '></label>';
+      }
+    }
+    nfw.modal.open({title: 'New ' + kind, body: html});
+
+    var bg = document.querySelector('.modal-bg');
+    if (!bg) { alert('modal-bg not found'); return; }
+    var m = bg.querySelector('.modal');
+    if (!m) { alert('modal not found'); return; }
+
+    var acts = document.createElement('div');
+    acts.className = 'actions';
+
+    var cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.textContent = 'Cancel';
+    cancel.onclick = function () { bg.remove(); };
+
+    var save = document.createElement('button');
+    save.type = 'button';
+    save.className = 'primary';
+    save.textContent = 'Save';
+    save.onclick = function () {
+      var body = {kind: kind};
+      for (var j = 0; j < fields.length; j++) {
+        var fld = fields[j];
+        if (!fld || !fld.name) continue;
+        var input = m.querySelector('[name="' + fld.name + '"]');
+        if (!input) continue;
+        if (input.type === 'checkbox') {
+          body[fld.name] = input.checked;
+        } else if (fld.type === 'number') {
+          body[fld.name] = parseInt(input.value, 10) || 0;
+        } else if (fld.comma) {
+          body[fld.name] = input.value.split(',').map(function (s) { return s.trim(); })
+                                         .filter(function (s) { return s; });
+        } else {
+          body[fld.name] = input.value.trim();
+        }
+      }
+      nfw.api.post('/api/interfaces/advanced', {interface: body})
+        .then(function () {
+          nfw.toast.ok('Added — click Save & Apply to activate');
+          bg.remove();
+          load();
+        })
+        .catch(function (e) { nfw.toast.err(e.message); });
+    };
+
+    acts.appendChild(cancel);
+    acts.appendChild(save);
+    m.appendChild(acts);
+  }
+
+  /* -------- Bind buttons -------- */
+  function bind() {
+    var btn;
+
+    btn = document.getElementById('add-vlan');
+    if (btn) btn.addEventListener('click', function () {
+      openForm('vlan', [
+        {name:'name',      label:'VLAN interface name',            placeholder:'vlan100'},
+        {name:'parent',    label:'Parent interface',               placeholder:'enp2s0'},
+        {name:'vlan_id',   label:'VLAN ID (1-4094)',  type:'number', default:100},
+        {name:'address',   label:'Address (CIDR, optional)',       placeholder:'192.168.100.1/24'},
+        {name:'dhcp',      label:'Use DHCP',           type:'checkbox'}
+      ]);
+    });
+
+    btn = document.getElementById('add-bridge');
+    if (btn) btn.addEventListener('click', function () {
+      openForm('bridge', [
+        {name:'name',      label:'Bridge name',        placeholder:'br0'},
+        {name:'members',   label:'Member interfaces (comma-separated)', comma:true, placeholder:'enp3s0,enp4s0'},
+        {name:'address',   label:'Address (CIDR)',     placeholder:'192.168.200.1/24'},
+        {name:'dhcp',      label:'Use DHCP',           type:'checkbox'},
+        {name:'stp',       label:'Enable STP',         type:'checkbox', default:true}
+      ]);
+    });
+
+    btn = document.getElementById('add-bond');
+    if (btn) btn.addEventListener('click', function () {
+      openForm('bond', [
+        {name:'name',      label:'Bond name',          placeholder:'bond0'},
+        {name:'members',   label:'Member interfaces (comma-separated)', comma:true, placeholder:'enp3s0,enp4s0'},
+        {name:'mode',      label:'Mode',               default:'802.3ad', placeholder:'802.3ad / active-backup / balance-rr'},
+        {name:'address',   label:'Address (CIDR)',     placeholder:'192.168.200.1/24'},
+        {name:'dhcp',      label:'Use DHCP',           type:'checkbox'}
+      ]);
+    });
+
+    btn = document.getElementById('add-gre');
+    if (btn) btn.addEventListener('click', function () {
+      openForm('gre', [
+        {name:'name',      label:'Interface name',     placeholder:'gre1'},
+        {name:'local',     label:'Local address (optional)', placeholder:'0.0.0.0'},
+        {name:'remote',    label:'Remote address',     placeholder:'203.0.113.5'},
+        {name:'address',   label:'Tunnel address (CIDR)', placeholder:'10.99.99.1/30'}
+      ]);
+    });
+
+    btn = document.getElementById('add-vxlan');
+    if (btn) btn.addEventListener('click', function () {
+      openForm('vxlan', [
+        {name:'name',      label:'Interface name',     placeholder:'vxlan100'},
+        {name:'vni',       label:'VNI',                type:'number', default:100},
+        {name:'remote',    label:'Remote address',     placeholder:'203.0.113.5'},
+        {name:'address',   label:'Tunnel address (CIDR)', placeholder:'10.100.0.1/24'}
+      ]);
+    });
+
+    btn = document.getElementById('add-loopback');
+    if (btn) btn.addEventListener('click', function () {
+      openForm('loopback', [
+        {name:'name',      label:'Loopback name',      placeholder:'lo0'},
+        {name:'address',   label:'Address (CIDR)',     placeholder:'10.200.0.1/32'}
+      ]);
+    });
+
+    btn = document.getElementById('refresh');
+    if (btn) btn.addEventListener('click', load);
+
+    btn = document.getElementById('apply-btn');
+    if (btn) btn.addEventListener('click', function () {
+      nfw.api.post('/api/interfaces/advanced/apply')
+        .then(function (r) {
+          if (r.errors && r.errors.length) {
+            r.errors.forEach(function (e) { nfw.toast.err(e.device + ': ' + e.error); });
+          } else {
+            var n = (r.written || []).length;
+            nfw.toast.ok('Applied (' + n + ' files written)');
+          }
+          load();
+        })
+        .catch(function (e) { nfw.toast.err(e.message); });
+    });
+
+    btn = document.getElementById('preview-btn');
+    if (btn) btn.addEventListener('click', function () {
+      nfw.api.get('/api/interfaces/advanced/preview')
+        .then(function (r) {
+          var text = (r.files || []).map(function (f) {
+            return '### ' + f.device + ' / ' + f.tag + '\n' + (f.content || f.error || '');
+          }).join('\n\n');
+          setText('preview-text', text);
+          var pc = document.getElementById('preview-card');
+          if (pc) pc.style.display = '';
+        })
+        .catch(function (e) { nfw.toast.err(e.message); });
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () { load(); bind(); });
+  } else {
+    load();
+    bind();
+  }
+})();
+</script>
+{% endblock %}

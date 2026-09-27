@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Services{% endblock %}
+{% block content %}
+<h1>Services</h1>
+<p class="subtitle">Managed systemd units</p>
+<div class="card">
+  <div id="svcs"><div class="muted">Loading…</div></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    const r = await nfw.api.get('/api/system/services');
+    const units = (r.units || []).map(u => ({ unit: u, state: '', active: false }));
+    // Fetch status of each in parallel
+    await Promise.all(units.map(async u => {
+      try {
+        const s = await nfw.api.get('/api/system/service-status?unit=' + encodeURIComponent(u.unit));
+        u.state = s.active || 'unknown';
+        u.active = u.state === 'active';
+      } catch (_) { u.state = 'unknown'; }
+    }));
+    const html = units.map(u => `
+      <tr>
+        <td class="mono">${esc(u.unit)}</td>
+        <td><span class="badge ${u.active ? 'ok' : 'warn'}">${esc(u.state)}</span></td>
+        <td><button class="small" data-unit="${esc(u.unit)}">Restart</button></td>
+      </tr>`).join('');
+    document.getElementById('svcs').innerHTML =
+      '<table class="data"><thead><tr><th>Unit</th><th>State</th><th></th></tr></thead><tbody>' + html + '</tbody></table>';
+    document.querySelectorAll('#svcs button[data-unit]').forEach(b => {
+      b.addEventListener('click', async () => {
+        const u = b.getAttribute('data-unit');
+        if (!confirm('Restart ' + u + '?')) return;
+        try {
+          await nfw.api.post('/api/system/service-restart', { unit: u });
+          nfw.toast.ok('Restarted ' + u);
+        } catch (e) { nfw.toast.err(e.message); }
+      });
+    });
+  } catch (e) { nfw.toast.err(e.message); }
+});
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+</script>
+{% endblock %}

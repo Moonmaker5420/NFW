@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+{% block title %}Diagnostics{% endblock %}
+{% block content %}
+<h1>Diagnostics</h1>
+<p class="subtitle">Ping, traceroute, DNS, port tests, states, packet capture, restricted shell. Every command runs through nfw-configd and is logged.</p>
+
+<div class="row between" style="margin-bottom:12px">
+  <div class="row">
+    <select id="tool">
+      <option value="ping">Ping</option>
+      <option value="traceroute">Traceroute</option>
+      <option value="dns">DNS Lookup</option>
+      <option value="porttest">Port Test</option>
+      <option value="arp">ARP / NDP</option>
+      <option value="states">States</option>
+      <option value="pcap">Packet Capture</option>
+      <option value="shell">Restricted Shell</option>
+    </select>
+  </div>
+  <div class="row">
+    <button id="run-btn" class="primary">Run</button>
+    <button id="clear-btn">Clear</button>
+  </div>
+</div>
+
+<div id="form-ping" class="card tool-form">
+  <h2>Ping</h2>
+  <label class="field"><span>Host</span><input type="text" id="ping-host" placeholder="1.1.1.1"></label>
+  <label class="field"><span>Count (1–20)</span><input type="number" id="ping-count" value="4" min="1" max="20"></label>
+  <label class="field"><span>Family</span>
+    <select id="ping-family">
+      <option value="auto">auto</option>
+      <option value="ipv4">IPv4</option>
+      <option value="ipv6">IPv6</option>
+    </select>
+  </label>
+  <label class="field"><span>Source (optional IP)</span><input type="text" id="ping-source" placeholder="192.168.10.1"></label>
+</div>
+
+<div id="form-traceroute" class="card tool-form hidden">
+  <h2>Traceroute</h2>
+  <label class="field"><span>Host</span><input type="text" id="tr-host"></label>
+  <label class="field"><span>Max TTL (1–30)</span><input type="number" id="tr-ttl" value="20" min="1" max="30"></label>
+  <label class="field"><span>Family</span>
+    <select id="tr-family"><option value="ipv4">IPv4</option><option value="ipv6">IPv6</option></select>
+  </label>
+</div>
+
+<div id="form-dns" class="card tool-form hidden">
+  <h2>DNS Lookup</h2>
+  <label class="field"><span>Name</span><input type="text" id="dns-name" placeholder="example.com"></label>
+  <label class="field"><span>Server (optional IP)</span><input type="text" id="dns-server" placeholder="1.1.1.1"></label>
+  <label class="field"><span>Type</span>
+    <select id="dns-type">
+      <option>A</option><option>AAAA</option><option>CNAME</option>
+      <option>MX</option><option>NS</option><option>TXT</option>
+      <option>SOA</option><option>PTR</option><option>SRV</option><option>ANY</option>
+    </select>
+  </label>
+</div>
+
+<div id="form-porttest" class="card tool-form hidden">
+  <h2>Port Test</h2>
+  <label class="field"><span>Host</span><input type="text" id="pt-host"></label>
+  <label class="field"><span>Port</span><input type="number" id="pt-port" value="443" min="1" max="65535"></label>
+  <label class="field"><span>Proto</span>
+    <select id="pt-proto"><option>tcp</option><option>udp</option></select>
+  </label>
+</div>
+
+<div id="form-arp" class="card tool-form hidden">
+  <h2>ARP / NDP</h2>
+  <label class="field"><span>Family</span>
+    <select id="arp-family">
+      <option value="ipv4">IPv4</option><option value="ipv6">IPv6</option><option value="all">All</option>
+    </select>
+  </label>
+  <label class="field"><span>Interface (optional)</span><input type="text" id="arp-iface" placeholder="enp2s0"></label>
+</div>
+
+<div id="form-states" class="card tool-form hidden">
+  <h2>Connection States</h2>
+  <label class="field"><span>Filter (substring)</span><input type="text" id="st-filter" placeholder="192.168.10"></label>
+  <label class="field"><span>Limit (1–2000)</span><input type="number" id="st-limit" value="200" min="1" max="2000"></label>
+</div>
+
+<div id="form-pcap" class="card tool-form hidden">
+  <h2>Packet Capture</h2>
+  <label class="field"><span>Interface</span><input type="text" id="pc-iface" placeholder="enp2s0"></label>
+  <label class="field"><span>BPF filter (optional)</span><input type="text" id="pc-filter" placeholder="tcp port 443"></label>
+  <label class="field"><span>Packet count (1–5000)</span><input type="number" id="pc-count" value="100" min="1" max="5000"></label>
+  <label class="field"><span>Max seconds (1–120)</span><input type="number" id="pc-seconds" value="10" min="1" max="120"></label>
+</div>
+
+<div id="form-shell" class="card tool-form hidden">
+  <h2>Restricted Shell</h2>
+  <p class="muted">Read-only. Allowed: ping, traceroute, dig, host, nslookup, ip, ss, nft list, wg show, ipsec status, systemctl status/is-active/is-enabled/list-units, journalctl, conntrack -L/-C/-S, uptime, free, df, date.</p>
+  <label class="field"><span>Command</span><input type="text" id="sh-cmd" placeholder="ip -br addr"></label>
+</div>
+
+<div class="card">
+  <h2>Output</h2>
+  <pre class="mono code" id="out" style="max-height:500px;overflow:auto">—</pre>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function v(id){ return document.getElementById(id).value; }
+function out(t){ document.getElementById('out').textContent = t; }
+
+const TOOLS = ['ping','traceroute','dns','porttest','arp','states','pcap','shell'];
+
+function showForm(name){
+  TOOLS.forEach(t => {
+    document.getElementById('form-'+t).classList.toggle('hidden', t !== name);
+  });
+}
+
+async function run(){
+  const tool = v('tool');
+  let url, body;
+  try {
+    if (tool === 'ping') {
+      url = '/api/diagnostics/ping';
+      body = { host: v('ping-host'), count: +v('ping-count'),
+               family: v('ping-family'), source: v('ping-source') || null };
+    } else if (tool === 'traceroute') {
+      url = '/api/diagnostics/traceroute';
+      body = { host: v('tr-host'), maxttl: +v('tr-ttl'), family: v('tr-family'), queries: 1 };
+    } else if (tool === 'dns') {
+      url = '/api/diagnostics/dns';
+      body = { name: v('dns-name'), server: v('dns-server') || null, type: v('dns-type') };
+    } else if (tool === 'porttest') {
+      url = '/api/diagnostics/porttest';
+      body = { host: v('pt-host'), port: +v('pt-port'), proto: v('pt-proto'), timeout: 5 };
+    } else if (tool === 'arp') {
+      url = '/api/diagnostics/arp';
+      body = { family: v('arp-family'), interface: v('arp-iface') || null };
+    } else if (tool === 'states') {
+      url = '/api/diagnostics/states';
+      body = { filter: v('st-filter') || null, limit: +v('st-limit') };
+    } else if (tool === 'pcap') {
+      out('capturing…');
+      const r = await fetch('/api/diagnostics/pcap', {
+        method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          interface: v('pc-iface'),
+          filter: v('pc-filter') || null,
+          count: +v('pc-count'),
+          seconds: +v('pc-seconds'),
+          snaplen: 0
+        })
+      });
+      if (!r.ok) { out('error: ' + await r.text()); return; }
+      const blob = await r.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'nfw-' + v('pc-iface') + '.pcap';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      out('capture downloaded (' + blob.size + ' bytes)');
+      return;
+    } else if (tool === 'shell') {
+      url = '/api/diagnostics/shell';
+      body = { argv: v('sh-cmd') };
+    }
+  } catch (e) { out('error: ' + e.message); return; }
+
+  out('running…');
+  try {
+    const r = await nfw.api.post(url, body);
+    out(r.output || (r.ok ? '(no output)' : (r.error || JSON.stringify(r, null, 2))));
+  } catch (e) {
+    out('error: ' + e.message);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  showForm('ping');
+  document.getElementById('tool').addEventListener('change', e => {
+    showForm(e.target.value);
+    out('—');
+  });
+  document.getElementById('run-btn').addEventListener('click', run);
+  document.getElementById('clear-btn').addEventListener('click', () => out('—'));
+});
+</script>
+{% endblock %}

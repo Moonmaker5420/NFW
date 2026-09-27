@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}Access Control{% endblock %}
+{% block content %}
+<h1>Access Control Lists</h1>
+<p class="subtitle">Fine-grained API permissions on top of role checks</p>
+
+<div class="row between" style="margin-bottom:12px">
+  <label class="row" style="gap:6px"><input type="checkbox" id="acl-enabled"> Enable ACL enforcement</label>
+  <div class="row">
+    <button id="save-btn" class="primary">Save</button>
+    <button id="refresh-btn">Refresh</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Role rules</h2>
+  <p class="muted" style="font-size:12px">
+    Each role grants a set of patterns. Format:
+    <code>METHOD /path/pattern</code> — e.g. <code>GET /api/services/*</code>,
+    <code>POST /api/firewall/*</code>, or <code>*</code> for everything.
+    Uses shell glob syntax (<code>*</code>, <code>?</code>).
+  </p>
+  <div id="role-rules"></div>
+</div>
+
+<div class="card">
+  <h2>Per-user overrides</h2>
+  <p class="muted" style="font-size:12px">
+    Deny always wins over allow. Allow short-circuits role lookup.
+  </p>
+  <div id="user-rules"></div>
+  <button id="add-user" class="small mt-2">+ Add user override</button>
+</div>
+
+<div class="card">
+  <h2>Test</h2>
+  <div class="grid cols-4">
+    <label class="field"><span>Username</span><input type="text" id="t-user" value="admin"></label>
+    <label class="field"><span>Role</span>
+      <select id="t-role"><option>readonly</option><option>operator</option><option>admin</option></select>
+    </label>
+    <label class="field"><span>Method</span>
+      <select id="t-method"><option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option></select>
+    </label>
+    <label class="field"><span>Path</span><input type="text" id="t-path" value="/api/services/dhcp"></label>
+  </div>
+  <button id="t-run" class="small primary">Check</button>
+  <span id="t-result" class="muted" style="margin-left:12px"></span>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let ACL = { enabled: false, roles: {}, users: {} };
+
+async function load() {
+  const r = await nfw.api.get('/api/auth/acls');
+  ACL = r.acls || { enabled: false, roles: {}, users: {} };
+  ACL.roles = ACL.roles || {};
+  ACL.users = ACL.users || {};
+  document.getElementById('acl-enabled').checked = !!ACL.enabled;
+  render();
+}
+
+function render() {
+  const rEl = document.getElementById('role-rules');
+  const roles = ['readonly', 'operator', 'admin'];
+  rEl.innerHTML = roles.map(role => `
+    <div style="margin-bottom:12px">
+      <div class="row between" style="margin-bottom:4px">
+        <strong>${role}</strong>
+      </div>
+      <textarea rows="3" data-role="${role}" placeholder="GET /api/services/*">${(ACL.roles[role]||[]).join('\n')}</textarea>
+    </div>`).join('');
+
+  const uEl = document.getElementById('user-rules');
+  const users = Object.keys(ACL.users);
+  if (!users.length) {
+    uEl.innerHTML = '<div class="muted">No per-user overrides</div>';
+    return;
+  }
+  uEl.innerHTML = users.map(u => `
+    <div class="card" style="background:var(--bg);margin:8px 0;padding:12px">
+      <div class="row between" style="margin-bottom:6px">
+        <strong>${u}</strong>
+        <button class="small danger" data-user-del="${u}">Del</button>
+      </div>
+      <label class="field"><span>Allow (one per line)</span>
+        <textarea rows="2" data-user="${u}" data-kind="allow">${(ACL.users[u].allow||[]).join('\n')}</textarea>
+      </label>
+      <label class="field"><span>Deny (one per line)</span>
+        <textarea rows="2" data-user="${u}" data-kind="deny">${(ACL.users[u].deny||[]).join('\n')}</textarea>
+      </label>
+    </div>`).join('');
+
+  uEl.querySelectorAll('textarea').forEach(t => t.addEventListener('input', () => {}));
+  uEl.querySelectorAll('[data-user-del]').forEach(b => b.onclick = () => {
+    delete ACL.users[b.getAttribute('data-user-del')];
+    render();
+  });
+}
+
+document.getElementById('add-user').onclick = () => {
+  const u = prompt('Username:');
+  if (!u) return;
+  ACL.users[u] = ACL.users[u] || { allow: [], deny: [] };
+  render();
+};
+
+document.getElementById('refresh-btn').onclick = load;
+
+document.getElementById('save-btn').onclick = async () => {
+  const acls = {
+    enabled: document.getElementById('acl-enabled').checked,
+    roles: {},
+    users: {},
+  };
+  document.querySelectorAll('#role-rules textarea').forEach(t => {
+    acls.roles[t.dataset.role] = t.value.split('\n').map(s => s.trim()).filter(Boolean);
+  });
+  document.querySelectorAll('#user-rules textarea').forEach(t => {
+    const u = t.dataset.user;
+    acls.users[u] = acls.users[u] || { allow: [], deny: [] };
+    acls.users[u][t.dataset.kind] = t.value.split('\n').map(s => s.trim()).filter(Boolean);
+  });
+  try {
+    await nfw.api.put('/api/auth/acls', { acls });
+    nfw.toast.ok('Staged. Commit via Configuration.');
+    load();
+  } catch (e) { nfw.toast.err(e.message); }
+};
+
+document.getElementById('t-run').onclick = async () => {
+  try {
+    const r = await nfw.api.post('/api/auth/acls/test', {
+      username: document.getElementById('t-user').value.trim(),
+      role: document.getElementById('t-role').value,
+      method: document.getElementById('t-method').value,
+      path: document.getElementById('t-path').value.trim(),
+    });
+    document.getElementById('t-result').innerHTML = r.allowed
+      ? '<span class="badge ok">ALLOWED</span>'
+      : '<span class="badge err">DENIED</span>';
+  } catch (e) { document.getElementById('t-result').textContent = e.message; }
+};
+
+document.addEventListener('DOMContentLoaded', load);
+</script>
+{% endblock %}

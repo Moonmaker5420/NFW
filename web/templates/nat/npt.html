@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}NPTv6{% endblock %}
+{% block content %}
+<h1>NPTv6</h1>
+<p class="subtitle">IPv6 Network Prefix Translation (RFC 6296). Prefix lengths /48–/64.</p>
+
+{% include "nat/_tabs.html" %}
+
+<div class="row between" style="margin-bottom:12px">
+  <button id="add-btn" class="small">+ Add entry</button>
+  <div class="row">
+    <button id="apply-btn" class="primary">Save &amp; Apply</button>
+    <button id="refresh-btn">Refresh</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Entries</h2>
+  <div id="tbl"><div class="muted">Loading…</div></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let ITEMS = [];
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+async function load() {
+  try {
+    ITEMS = (await nfw.api.get('/api/firewall/nat/npt')).entries || [];
+    render();
+  } catch (e) { nfw.toast.err(e.message); }
+}
+
+function render() {
+  if (ITEMS.length === 0) {
+    document.getElementById('tbl').innerHTML = '<div class="muted">No NPTv6 entries yet</div>';
+    return;
+  }
+  const rows = ITEMS.map(p => `
+    <tr>
+      <td style="width:36px"><input type="checkbox" ${p.enabled !== false ? 'checked' : ''} data-toggle="${esc(p.id)}" style="width:auto"></td>
+      <td class="mono">${esc(p.internal_prefix)}</td>
+      <td class="mono">↔ ${esc(p.external_prefix)}</td>
+      <td>${esc(p.description || '')}</td>
+      <td style="width:120px">
+        <button class="small" data-edit="${esc(p.id)}">Edit</button>
+        <button class="small danger" data-del="${esc(p.id)}">Del</button>
+      </td>
+    </tr>`).join('');
+  document.getElementById('tbl').innerHTML =
+    '<table class="data"><thead><tr><th>On</th><th>Internal prefix</th><th>External prefix</th><th>Description</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+  bind();
+}
+
+function bind() {
+  document.querySelectorAll('[data-toggle]').forEach(el => el.addEventListener('change', async () => {
+    try { await nfw.api.post('/api/firewall/nat/npt/' + el.getAttribute('data-toggle') + '/toggle'); load(); }
+    catch (e) { nfw.toast.err(e.message); }
+  }));
+  document.querySelectorAll('[data-del]').forEach(el => el.addEventListener('click', async () => {
+    if (!confirm('Delete this NPTv6 entry?')) return;
+    try { await nfw.api.del('/api/firewall/nat/npt/' + el.getAttribute('data-del')); nfw.toast.ok('Deleted'); load(); }
+    catch (e) { nfw.toast.err(e.message); }
+  }));
+  document.querySelectorAll('[data-edit]').forEach(el => el.addEventListener('click', () => edit(el.getAttribute('data-edit'))));
+}
+
+function edit(id) {
+  const p = id ? ITEMS.find(x => x.id === id)
+               : {internal_prefix:'', external_prefix:'', description:'', enabled:true};
+  const html = `
+    <label class="field"><span>Description</span><input type="text" name="description" value="${esc(p.description||'')}"></label>
+    <label class="field"><span>Internal prefix (LAN side)</span><input type="text" name="internal_prefix" placeholder="fd00:10::/48" value="${esc(p.internal_prefix||'')}"></label>
+    <label class="field"><span>External prefix (WAN side)</span><input type="text" name="external_prefix" placeholder="2001:db8:1::/48" value="${esc(p.external_prefix||'')}"></label>
+    <label class="row" style="gap:6px;margin-top:8px"><input type="checkbox" name="enabled" ${p.enabled !== false ? 'checked' : ''}> Enabled</label>
+  `;
+
+  nfw.modal.open({
+    title: id ? 'Edit NPTv6 entry' : 'New NPTv6 entry',
+    body: html,
+    actions: [
+      { label: 'Cancel', onClick: (e, close) => close() },
+      { label: 'Save', className: 'primary', onClick: async (e, close) => {
+          const m = document.querySelector('.modal');
+          const body = {};
+          m.querySelectorAll('[name]').forEach(el => {
+            body[el.name] = el.type === 'checkbox' ? el.checked : el.value;
+          });
+          try {
+            if (id) await nfw.api.put('/api/firewall/nat/npt/' + id, {entry: body});
+            else    await nfw.api.post('/api/firewall/nat/npt', {entry: body});
+            nfw.toast.ok('Saved (staged) — Apply to activate');
+            close();
+            load();
+          } catch (err) { nfw.toast.err(err.message); }
+        }
+      },
+    ],
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  load();
+  document.getElementById('refresh-btn').addEventListener('click', load);
+  document.getElementById('add-btn').addEventListener('click', () => edit(null));
+  document.getElementById('apply-btn').addEventListener('click', async () => {
+    if (!confirm('Apply the current ruleset? This reloads nftables.')) return;
+    try {
+      const r = await nfw.api.post('/api/firewall/apply');
+      nfw.toast.ok('Applied (' + (r.bytes || 0) + ' bytes)');
+    } catch (e) { nfw.toast.err(e.message); }
+  });
+});
+</script>
+{% endblock %}

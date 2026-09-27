@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Routes{% endblock %}
+{% block content %}
+<h1>Routes</h1>
+<p class="subtitle">IPv4 and IPv6 routing table</p>
+<div class="card">
+  <pre class="code" id="routes">Loading…</pre>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    const r = await nfw.api.get('/api/system/routes');
+    const raw = r.json || r || '[]';
+    let lines = [];
+    try {
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      lines = parsed.map(rt => {
+        const dst = rt.dst || 'default';
+        const gw = rt.gateway || '';
+        const dev = rt.dev || '';
+        return `${dst.padEnd(24)} via ${gw.padEnd(16)} dev ${dev}`;
+      });
+    } catch (_) { lines = [String(raw)]; }
+    document.getElementById('routes').textContent = lines.join('\n');
+  } catch (e) { document.getElementById('routes').textContent = 'Failed: ' + e.message; }
+});
+</script>
+{% endblock %}

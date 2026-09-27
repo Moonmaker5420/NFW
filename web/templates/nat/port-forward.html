@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}Port Forwarding{% endblock %}
+{% block content %}
+<h1>Port Forwarding</h1>
+<p class="subtitle">DNAT rules: external port on WAN → internal IP:port</p>
+
+{% include "nat/_tabs.html" %}
+
+<div class="row between" style="margin-bottom:12px">
+  <button id="add-btn" class="small">+ Add forward</button>
+  <div class="row">
+    <button id="apply-btn" class="primary">Save &amp; Apply</button>
+    <button id="refresh-btn">Refresh</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Port forwards</h2>
+  <div id="tbl"><div class="muted">Loading…</div></div>
+</div>
+
+<div class="card" id="preview-card" style="display:none">
+  <h2>Preview</h2>
+  <pre class="code" id="preview-text" style="max-height:400px"></pre>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let PFS = [];
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+async function load() {
+  try {
+    const r = await nfw.api.get('/api/firewall/nat/port-forwards');
+    PFS = r.port_forwards || [];
+    render();
+  } catch (e) { nfw.toast.err(e.message); }
+}
+
+function render() {
+  if (PFS.length === 0) {
+    document.getElementById('tbl').innerHTML = '<div class="muted">No port forwards yet</div>';
+    return;
+  }
+  const rows = PFS.map(p => `
+    <tr>
+      <td style="width:36px"><input type="checkbox" ${p.enabled !== false ? 'checked' : ''} data-toggle="${esc(p.id)}" style="width:auto"></td>
+      <td class="mono">${esc((p.proto || 'tcp').toUpperCase())} ${esc(p.ext_port)}</td>
+      <td class="mono">→ ${esc(p.int_ip)}:${esc(p.int_port || p.ext_port)}</td>
+      <td>${esc(p.description || '')}</td>
+      <td style="width:120px">
+        <button class="small" data-edit="${esc(p.id)}">Edit</button>
+        <button class="small danger" data-del="${esc(p.id)}">Del</button>
+      </td>
+    </tr>`).join('');
+  document.getElementById('tbl').innerHTML =
+    '<table class="data"><thead><tr><th>On</th><th>External</th><th>→ Internal</th><th>Description</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+  bind();
+}
+
+function bind() {
+  document.querySelectorAll('[data-toggle]').forEach(el => el.addEventListener('change', async () => {
+    try { await nfw.api.post('/api/firewall/nat/port-forwards/' + el.getAttribute('data-toggle') + '/toggle'); load(); }
+    catch (e) { nfw.toast.err(e.message); }
+  }));
+  document.querySelectorAll('[data-del]').forEach(el => el.addEventListener('click', async () => {
+    if (!confirm('Delete this port forward?')) return;
+    try { await nfw.api.del('/api/firewall/nat/port-forwards/' + el.getAttribute('data-del')); nfw.toast.ok('Deleted'); load(); }
+    catch (e) { nfw.toast.err(e.message); }
+  }));
+  document.querySelectorAll('[data-edit]').forEach(el => el.addEventListener('click', () => edit(el.getAttribute('data-edit'))));
+}
+
+function edit(id) {
+  const p = id ? PFS.find(x => x.id === id)
+               : {proto:'tcp', ext_port:'', int_ip:'', int_port:'', description:'', enabled:true};
+  const html = `
+    <label class="field"><span>Description</span><input type="text" name="description" value="${esc(p.description||'')}"></label>
+    <label class="field"><span>Proto</span>
+      <select name="proto">
+        <option value="tcp" ${p.proto==='tcp'?'selected':''}>TCP</option>
+        <option value="udp" ${p.proto==='udp'?'selected':''}>UDP</option>
+      </select>
+    </label>
+    <label class="field"><span>External port</span><input type="number" name="ext_port" min="1" max="65535" value="${esc(p.ext_port||'')}"></label>
+    <label class="field"><span>Internal IP</span><input type="text" name="int_ip" placeholder="192.168.10.50" value="${esc(p.int_ip||'')}"></label>
+    <label class="field"><span>Internal port (blank = same)</span><input type="number" name="int_port" min="1" max="65535" value="${esc(p.int_port||'')}"></label>
+    <label class="row" style="gap:6px;margin-top:8px"><input type="checkbox" name="enabled" ${p.enabled !== false ? 'checked' : ''}> Enabled</label>
+  `;
+
+  nfw.modal.open({
+    title: id ? 'Edit port forward' : 'New port forward',
+    body: html,
+    actions: [
+      { label: 'Cancel', onClick: (e, close) => close() },
+      { label: 'Save', className: 'primary', onClick: async (e, close) => {
+          const m = document.querySelector('.modal');
+          const body = {};
+          m.querySelectorAll('[name]').forEach(el => {
+            body[el.name] = el.type === 'checkbox' ? el.checked : el.value;
+          });
+          try {
+            if (id) await nfw.api.put('/api/firewall/nat/port-forwards/' + id, {pf: body});
+            else    await nfw.api.post('/api/firewall/nat/port-forwards', {pf: body});
+            nfw.toast.ok('Saved (staged) — Apply to activate');
+            close();
+            load();
+          } catch (err) { nfw.toast.err(err.message); }
+        }
+      },
+    ],
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  load();
+  document.getElementById('refresh-btn').addEventListener('click', load);
+  document.getElementById('add-btn').addEventListener('click', () => edit(null));
+  document.getElementById('apply-btn').addEventListener('click', async () => {
+    if (!confirm('Apply the current ruleset? This reloads nftables.')) return;
+    try {
+      const r = await nfw.api.post('/api/firewall/apply');
+      nfw.toast.ok('Applied (' + (r.bytes || 0) + ' bytes)');
+    } catch (e) { nfw.toast.err(e.message); }
+  });
+});
+</script>
+{% endblock %}

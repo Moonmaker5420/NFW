@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Normalization{% endblock %}
+{% block content %}
+<h1>Normalization / Scrubbing</h1>
+<p class="subtitle">Packet scrubbing, ICMP policy, MSS clamping, SYN flood protection.</p>
+
+<div class="row between" style="margin-bottom:12px">
+  <div class="row">
+    <span class="muted">Applies to <code>nfw_filter</code> on the next firewall apply.</span>
+  </div>
+  <div class="row">
+    <button id="apply-btn" class="primary">Save &amp; Apply</button>
+    <button id="refresh-btn">Refresh</button>
+  </div>
+</div>
+
+<div class="grid cols-2">
+  <div class="card">
+    <h2>ICMP policy</h2>
+    <label class="row" style="gap:6px"><input type="checkbox" id="icmp_drop_redirects"> Drop ICMP redirects</label>
+    <label class="row" style="gap:6px"><input type="checkbox" id="icmp_drop_source_quench"> Drop ICMP source-quench</label>
+    <label class="row" style="gap:6px"><input type="checkbox" id="log_martians"> Log martians (RFC1918 sources on WAN)</label>
+  </div>
+
+  <div class="card">
+    <h2>TCP / fragment</h2>
+    <label class="row" style="gap:6px"><input type="checkbox" id="mss_clamp"> Enable MSS clamping</label>
+    <label class="field" style="margin-top:8px"><span>MSS clamp size</span>
+      <input type="number" id="mss_clamp_size" min="536" max="65535" value="1452">
+    </label>
+    <label class="field" style="margin-top:8px"><span>Fragment policy</span>
+      <select id="frag_policy">
+        <option value="pass">Pass (default — safe)</option>
+        <option value="drop">Drop non-first fragments</option>
+      </select>
+    </label>
+    <p class="muted" style="font-size:12px;margin-top:6px">
+      Dropping fragments can break large DNS replies and VPN tunnels. Only enable if you know you need it.
+    </p>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Connection state</h2>
+  <label class="row" style="gap:6px"><input type="checkbox" id="syn_flood_protect"> SYN flood protection (30 SYNs/minute per source)</label>
+  <label class="row" style="gap:6px"><input type="checkbox" id="drop_invalid"> Drop invalid conntrack state (recommended)</label>
+</div>
+
+<div class="card">
+  <h2>Preview</h2>
+  <pre class="code" id="preview" style="max-height:400px">—</pre>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+async function load() {
+  try {
+    const r = await nfw.api.get('/api/firewall/normalization');
+    const n = r.normalization || {};
+    document.getElementById('icmp_drop_redirects').checked      = n.icmp_drop_redirects !== false;
+    document.getElementById('icmp_drop_source_quench').checked  = n.icmp_drop_source_quench !== false;
+    document.getElementById('log_martians').checked             = !!n.log_martians;
+    document.getElementById('mss_clamp').checked                = !!n.mss_clamp;
+    document.getElementById('mss_clamp_size').value             = n.mss_clamp_size || 1452;
+    document.getElementById('frag_policy').value                = n.frag_policy || 'pass';
+    document.getElementById('syn_flood_protect').checked        = !!n.syn_flood_protect;
+    document.getElementById('drop_invalid').checked             = n.drop_invalid !== false;
+  } catch (e) { nfw.toast.err(e.message); }
+  loadPreview();
+}
+
+async function loadPreview() {
+  try {
+    const p = await nfw.api.get('/api/firewall/preview');
+    document.getElementById('preview').textContent = p.ruleset || '—';
+  } catch (_) {}
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  load();
+  document.getElementById('refresh-btn').addEventListener('click', load);
+  document.getElementById('apply-btn').addEventListener('click', async () => {
+    try {
+      await nfw.api.put('/api/firewall/normalization', {
+        normalization: {
+          icmp_drop_redirects:     document.getElementById('icmp_drop_redirects').checked,
+          icmp_drop_source_quench: document.getElementById('icmp_drop_source_quench').checked,
+          log_martians:            document.getElementById('log_martians').checked,
+          mss_clamp:               document.getElementById('mss_clamp').checked,
+          mss_clamp_size:          parseInt(document.getElementById('mss_clamp_size').value) || 1452,
+          frag_policy:             document.getElementById('frag_policy').value,
+          syn_flood_protect:       document.getElementById('syn_flood_protect').checked,
+          drop_invalid:            document.getElementById('drop_invalid').checked,
+        },
+      });
+      const r = await nfw.api.post('/api/firewall/apply');
+      nfw.toast.ok('Applied (' + (r.bytes || 0) + ' bytes)');
+      load();
+    } catch (e) { nfw.toast.err(e.message); }
+  });
+});
+</script>
+{% endblock %}

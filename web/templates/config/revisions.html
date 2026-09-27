@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Revisions{% endblock %}
+{% block content %}
+<h1>Configuration Revisions</h1>
+<p class="subtitle">Immutable history of every commit</p>
+<div class="card">
+  <div id="revs"><div class="muted">Loading…</div></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    const r = await nfw.api.get('/api/config/revisions?limit=100');
+    const rows = r.revisions.map(rev => ({
+      revision: rev.revision, ts: new Date(rev.ts*1000).toLocaleString(),
+      author: rev.author, message: rev.message || '',
+      active: r.active && r.active.revision === rev.revision,
+    }));
+    if (rows.length === 0) {
+      document.getElementById('revs').innerHTML = '<div class="muted">No revisions yet</div>';
+      return;
+    }
+    const html = rows.map(row => `
+      <tr>
+        <td class="mono">${row.revision}</td>
+        <td>${row.ts}</td>
+        <td>${esc(row.author)}</td>
+        <td>${esc(row.message)}</td>
+        <td>${row.active ? '<span class="badge ok">active</span>' : ''}</td>
+      </tr>`).join('');
+    document.getElementById('revs').innerHTML =
+      '<table class="data"><thead><tr><th>Revision</th><th>Time</th><th>Author</th><th>Message</th><th></th></tr></thead><tbody>' + html + '</tbody></table>';
+  } catch (e) { nfw.toast.err('Failed to load revisions: ' + e.message); }
+});
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+</script>
+{% endblock %}

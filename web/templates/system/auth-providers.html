@@ -1,0 +1,364 @@
+{% extends "base.html" %}
+{% block title %}Authentication Providers{% endblock %}
+{% block content %}
+<h1>Authentication Providers</h1>
+<p class="subtitle">Local users, LDAP/AD, and RADIUS. Tried in order.</p>
+
+<div class="row between" style="margin-bottom:12px">
+  <span class="muted" style="font-size:12px">
+    Credentials never leave the firewall: the login flow runs entirely in configd.
+  </span>
+  <div class="row">
+    <button id="save-btn" class="primary">Save</button>
+    <button id="refresh-btn">Refresh</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Provider order</h2>
+  <p class="muted" style="font-size:12px">
+    Enable/disable providers. Local is tried first by default; uncheck to skip.
+    Changes take effect on the next login.
+  </p>
+  <label class="row" style="gap:6px"><input type="checkbox" id="prov-local" > Local users (bcrypt)</label>
+  <label class="row" style="gap:6px;margin-top:4px"><input type="checkbox" id="prov-ldap"> LDAP / Active Directory</label>
+  <label class="row" style="gap:6px;margin-top:4px"><input type="checkbox" id="prov-radius"> RADIUS</label>
+</div>
+
+<div class="card">
+  <h2>LDAP / Active Directory</h2>
+  <div class="grid cols-2">
+    <label class="field"><span>Server hostname or IP</span><input type="text" id="ldap-server" placeholder="ldap.example.com"></label>
+    <label class="field"><span>Port</span><input type="number" id="ldap-port" value="389"></label>
+    <label class="row" style="gap:6px"><input type="checkbox" id="ldap-ssl"> Use SSL (ldaps, port 636)</label>
+    <label class="row" style="gap:6px"><input type="checkbox" id="ldap-starttls"> Use StartTLS</label>
+    <label class="field"><span>CA certificate path (optional — enables verification)</span><input type="text" id="ldap-ca" placeholder="/etc/ssl/certs/ca.pem"></label>
+    <label class="field"><span>Timeout (seconds)</span><input type="number" id="ldap-timeout" value="5"></label>
+    <label class="field"><span>Bind DN (service account)</span><input type="text" id="ldap-bind-dn" placeholder="cn=readonly,dc=example,dc=com"></label>
+    <label class="field"><span>Bind password</span><input type="password" id="ldap-bind-pw" placeholder="(leave blank to keep)"></label>
+    <label class="field"><span>Base DN (search root)</span><input type="text" id="ldap-base-dn" placeholder="dc=example,dc=com"></label>
+    <label class="field"><span>User filter</span><input type="text" id="ldap-filter" placeholder="(uid={username})"></label>
+    <label class="field"><span>Default role for unmapped users</span>
+      <select id="ldap-default-role">
+        <option value="readonly">readonly</option>
+        <option value="operator">operator</option>
+        <option value="admin">admin</option>
+      </select>
+    </label>
+    <label class="row" style="gap:6px"><input type="checkbox" id="ldap-auto-create"> Auto-create local record on first login</label>
+  </div>
+  <div class="row mt-2">
+    <button id="ldap-test" class="small">Test connection</button>
+    <span id="ldap-test-result" class="muted" style="font-size:12px"></span>
+  </div>
+
+  <label class="field mt-4"><span>Group → Role mapping (one per line: <code>cn=...,ou=...,dc=...=admin</code>)</span>
+    <textarea id="ldap-group-map" rows="4" placeholder="cn=nfw-admins,ou=groups,dc=example,dc=com=admin&#10;cn=nfw-operators,ou=groups,dc=example,dc=com=operator"></textarea>
+  </label>
+</div>
+
+<div class="card">
+  <h2>RADIUS</h2>
+  <div class="grid cols-2">
+    <label class="field"><span>Server hostname or IP</span><input type="text" id="rad-server" placeholder="radius.example.com"></label>
+    <label class="field"><span>Auth port</span><input type="number" id="rad-port" value="1812"></label>
+    <label class="field"><span>Shared secret</span><input type="password" id="rad-secret" placeholder="(leave blank to keep)"></label>
+    <label class="field"><span>NAS Identifier</span><input type="text" id="rad-nas" value="nfw"></label>
+    <label class="field"><span>Timeout (seconds)</span><input type="number" id="rad-timeout" value="5"></label>
+    <label class="field"><span>Default role for unmapped users</span>
+      <select id="rad-default-role">
+        <option value="readonly">readonly</option>
+        <option value="operator">operator</option>
+        <option value="admin">admin</option>
+      </select>
+    </label>
+    <label class="row" style="gap:6px"><input type="checkbox" id="rad-auto-create"> Auto-create local record on first login</label>
+  </div>
+  <div class="row mt-2">
+    <button id="rad-test" class="small">Test reachability</button>
+    <span id="rad-test-result" class="muted" style="font-size:12px"></span>
+  </div>
+
+  <label class="field mt-4"><span>Attribute → Role mapping (one per line: <code>Filter-Id:nfw-admin=admin</code>)</span>
+    <textarea id="rad-attr-map" rows="3" placeholder="Filter-Id:nfw-admin=admin&#10;Filter-Id:nfw-ops=operator"></textarea>
+  </label>
+</div>
+
+<div class="card" id="oauth-section">
+  <h2>OAuth / OIDC Providers</h2>
+  <p class="muted" style="font-size:12px">
+    Add one provider per issuer. The redirect URI must be
+    <code>https://&lt;your-host&gt;/api/auth/oauth/callback/&lt;provider-id&gt;</code>.
+    Google and GitHub require HTTPS.
+  </p>
+  <label class="row" style="gap:6px;margin-bottom:12px"><input type="checkbox" id="oauth-enabled"> Enable OAuth/OIDC</label>
+  <div id="oauth-providers"></div>
+  <button id="oauth-add" class="small mt-2">+ Add provider</button>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+// map text → dict helpers
+function linesToDict(text, sep1, sep2) {
+  const out = {};
+  text.split('\n').map(s=>s.trim()).filter(Boolean).forEach(line => {
+    // group role: "cn=...,dc=com=admin"  → sep1 is absent, sep2 is last "="
+    const idx = line.lastIndexOf(sep2);
+    if (idx < 0) return;
+    const key = line.slice(0, idx);
+    const val = line.slice(idx + 1).trim();
+    if (!key || !val) return;
+    out[key] = val;
+  });
+  return out;
+}
+function dictToLines(dict, sep1, sep2) {
+  return Object.entries(dict||{}).map(([k,v]) => sep1 ? `${k}${sep1}${v}` : `${k}${sep2}${v}`).join('\n');
+}
+// LDAP group map: format is "DN=role" (last =)
+function groupMapToLines(m) {
+  return Object.entries(m||{}).map(([k,v]) => `${k}=${v}`).join('\n');
+}
+function linesToGroupMap(t) {
+  const out = {};
+  t.split('\n').map(s=>s.trim()).filter(Boolean).forEach(line => {
+    const i = line.lastIndexOf('=');
+    if (i < 0) return;
+    const k = line.slice(0, i);
+    const v = line.slice(i+1).trim();
+    if (k && v) out[k] = v;
+  });
+  return out;
+}
+// RADIUS attr map: "Filter-Id:value=role"
+function attrMapToLines(m) {
+  const out = [];
+  for (const [attr, vals] of Object.entries(m||{})) {
+    for (const [v, r] of Object.entries(vals||{})) {
+      out.push(`${attr}:${v}=${r}`);
+    }
+  }
+  return out.join('\n');
+}
+function linesToAttrMap(t) {
+  const out = {};
+  t.split('\n').map(s=>s.trim()).filter(Boolean).forEach(line => {
+    const colon = line.indexOf(':');
+    const eq = line.lastIndexOf('=');
+    if (colon < 0 || eq < colon) return;
+    const attr = line.slice(0, colon).trim();
+    const val = line.slice(colon+1, eq).trim();
+    const role = line.slice(eq+1).trim();
+    if (!attr || !val || !role) return;
+    (out[attr] = out[attr] || {})[val] = role;
+  });
+  return out;
+}
+
+async function load() {
+  const r = await nfw.api.get('/api/auth/providers');
+  const provs = r.providers || [];
+  const byType = Object.fromEntries(provs.map(p => [p.type, !!p.enabled]));
+  document.getElementById('prov-local').checked  = byType.local !== false;
+  document.getElementById('prov-ldap').checked   = !!byType.ldap;
+  document.getElementById('prov-radius').checked = !!byType.radius;
+
+  const l = r.ldap || {};
+  document.getElementById('ldap-server').value = l.server || '';
+  document.getElementById('ldap-port').value = l.port || 389;
+  document.getElementById('ldap-ssl').checked = !!l.use_ssl;
+  document.getElementById('ldap-starttls').checked = !!l.use_starttls;
+  document.getElementById('ldap-ca').value = l.ca_cert || '';
+  document.getElementById('ldap-timeout').value = l.timeout || 5;
+  document.getElementById('ldap-bind-dn').value = l.bind_dn || '';
+  document.getElementById('ldap-bind-pw').value = l.bind_password || '';
+  document.getElementById('ldap-base-dn').value = l.base_dn || '';
+  document.getElementById('ldap-filter').value = l.user_filter || '(uid={username})';
+  document.getElementById('ldap-default-role').value = l.default_role || 'readonly';
+  document.getElementById('ldap-auto-create').checked = l.auto_create !== false;
+  document.getElementById('ldap-group-map').value = groupMapToLines(l.group_role_map || {});
+
+  const ra = r.radius || {};
+  document.getElementById('rad-server').value = ra.server || '';
+  document.getElementById('rad-port').value = ra.port || 1812;
+  document.getElementById('rad-secret').value = ra.secret || '';
+  document.getElementById('rad-nas').value = ra.nas_id || 'nfw';
+  document.getElementById('rad-timeout').value = ra.timeout || 5;
+  document.getElementById('rad-default-role').value = ra.default_role || 'readonly';
+  document.getElementById('rad-auto-create').checked = ra.auto_create !== false;
+  document.getElementById('rad-attr-map').value = attrMapToLines(ra.attribute_role_map || {});
+}
+
+document.getElementById('refresh-btn').onclick = load;
+
+document.getElementById('save-btn').onclick = async () => {
+  const body = {
+    providers: [
+      { type: 'local',  enabled: document.getElementById('prov-local').checked },
+      { type: 'ldap',   enabled: document.getElementById('prov-ldap').checked },
+      { type: 'radius', enabled: document.getElementById('prov-radius').checked },
+    ],
+    ldap: {
+      enabled: document.getElementById('prov-ldap').checked,
+      server: document.getElementById('ldap-server').value.trim(),
+      port: parseInt(document.getElementById('ldap-port').value) || 389,
+      use_ssl: document.getElementById('ldap-ssl').checked,
+      use_starttls: document.getElementById('ldap-starttls').checked,
+      ca_cert: document.getElementById('ldap-ca').value.trim(),
+      timeout: parseInt(document.getElementById('ldap-timeout').value) || 5,
+      bind_dn: document.getElementById('ldap-bind-dn').value.trim(),
+      bind_password: document.getElementById('ldap-bind-pw').value,
+      base_dn: document.getElementById('ldap-base-dn').value.trim(),
+      user_filter: document.getElementById('ldap-filter').value.trim(),
+      default_role: document.getElementById('ldap-default-role').value,
+      auto_create: document.getElementById('ldap-auto-create').checked,
+      group_role_map: linesToGroupMap(document.getElementById('ldap-group-map').value),
+    },
+    radius: {
+      enabled: document.getElementById('prov-radius').checked,
+      server: document.getElementById('rad-server').value.trim(),
+      port: parseInt(document.getElementById('rad-port').value) || 1812,
+      secret: document.getElementById('rad-secret').value,
+      nas_id: document.getElementById('rad-nas').value.trim(),
+      timeout: parseInt(document.getElementById('rad-timeout').value) || 5,
+      default_role: document.getElementById('rad-default-role').value,
+      auto_create: document.getElementById('rad-auto-create').checked,
+      attribute_role_map: linesToAttrMap(document.getElementById('rad-attr-map').value),
+    },
+  };
+  try {
+    await nfw.api.put('/api/auth/providers', body);
+    nfw.toast.ok('Staged. Commit via Configuration → Commit to apply.');
+    load();
+  } catch (e) { nfw.toast.err(e.message); }
+};
+
+document.getElementById('ldap-test').onclick = async () => {
+  const el = document.getElementById('ldap-test-result');
+  el.textContent = 'testing…';
+  try {
+    const r = await nfw.api.post('/api/auth/providers/ldap/test');
+    el.innerHTML = r.ok
+      ? '<span class="badge ok">OK</span> ' + esc(r.info || '')
+      : '<span class="badge err">FAIL</span> ' + esc(r.reason || '');
+  } catch (e) { el.textContent = 'error: ' + e.message; }
+};
+
+document.getElementById('rad-test').onclick = async () => {
+  const el = document.getElementById('rad-test-result');
+  el.textContent = 'testing…';
+  try {
+    const r = await nfw.api.post('/api/auth/providers/radius/test');
+    el.innerHTML = r.ok
+      ? '<span class="badge ok">' + esc(r.interpretation || 'reachable') + '</span>'
+      : '<span class="badge err">FAIL</span> ' + esc(r.reason || '');
+  } catch (e) { el.textContent = 'error: ' + e.message; }
+};
+
+let OAUTH = { enabled: false, providers: [] };
+
+async function loadOAuth() {
+  try {
+    const r = await nfw.api.get('/api/auth/oauth/get');
+    OAUTH = r;
+    document.getElementById('oauth-enabled').checked = !!OAUTH.enabled;
+    renderOAuth();
+  } catch (_) {}
+}
+
+function renderOAuth() {
+  const el = document.getElementById('oauth-providers');
+  if (!OAUTH.providers.length) {
+    el.innerHTML = '<div class="muted">No providers configured</div>';
+    return;
+  }
+  el.innerHTML = OAUTH.providers.map((p, i) => `
+    <div class="card" style="background:var(--bg);margin:8px 0;padding:12px">
+      <div class="row between" style="margin-bottom:6px">
+        <strong>${p.name || p.id}</strong>
+        <button class="small danger" data-oauth-del="${i}">Del</button>
+      </div>
+      <div class="grid cols-2">
+        <label class="field"><span>ID (used in URL)</span><input type="text" data-i="${i}" data-k="id" value="${p.id || ''}"></label>
+        <label class="field"><span>Display name</span><input type="text" data-i="${i}" data-k="name" value="${p.name || ''}"></label>
+        <label class="field"><span>Type</span>
+          <select data-i="${i}" data-k="type">
+            <option value="oidc"${p.type==='oidc'?' selected':''}>Generic OIDC</option>
+            <option value="google"${p.type==='google'?' selected':''}>Google</option>
+            <option value="github"${p.type==='github'?' selected':''}>GitHub</option>
+          </select>
+        </label>
+        <label class="field"><span>Issuer URL</span><input type="text" data-i="${i}" data-k="issuer" value="${p.issuer || ''}" placeholder="https://accounts.google.com"></label>
+        <label class="field"><span>Client ID</span><input type="text" data-i="${i}" data-k="client_id" value="${p.client_id || ''}"></label>
+        <label class="field"><span>Client secret (leave masked to keep)</span><input type="password" data-i="${i}" data-k="client_secret" value="${p.client_secret || ''}"></label>
+        <label class="field"><span>Scopes</span><input type="text" data-i="${i}" data-k="scopes" value="${p.scopes || 'openid email profile'}"></label>
+        <label class="field"><span>Default role</span>
+          <select data-i="${i}" data-k="default_role">
+            <option value="readonly"${p.default_role==='readonly'?' selected':''}>readonly</option>
+            <option value="operator"${p.default_role==='operator'?' selected':''}>operator</option>
+            <option value="admin"${p.default_role==='admin'?' selected':''}>admin</option>
+          </select>
+        </label>
+        <label class="field"><span>Role claim (e.g. <code>groups</code>, <code>email</code>)</span><input type="text" data-i="${i}" data-k="role_claim" value="${p.role_claim || ''}"></label>
+        <label class="row" style="gap:6px"><input type="checkbox" data-i="${i}" data-k="enabled" ${p.enabled!==false?'checked':''}> Enabled</label>
+      </div>
+      <label class="field mt-2"><span>Claim→Role map (one per line: <code>value=role</code>)</span>
+        <textarea rows="2" data-i="${i}" data-k="claim_role_map_text">${Object.entries(p.claim_role_map||{}).map(([k,v])=>k+'='+v).join('\n')}</textarea>
+      </label>
+    </div>`).join('');
+
+  el.querySelectorAll('input,select,textarea').forEach(inp => {
+    inp.addEventListener('input', e => {
+      const i = +e.target.dataset.i;
+      const k = e.target.dataset.k;
+      if (k === 'claim_role_map_text') return; // read on save
+      if (k === 'enabled') OAUTH.providers[i][k] = e.target.checked;
+      else OAUTH.providers[i][k] = e.target.value;
+    });
+  });
+  el.querySelectorAll('[data-oauth-del]').forEach(b => b.onclick = () => {
+    OAUTH.providers.splice(+b.getAttribute('data-oauth-del'), 1); renderOAuth();
+  });
+}
+
+document.getElementById('oauth-add').onclick = () => {
+  OAUTH.providers.push({
+    id: 'provider' + (OAUTH.providers.length + 1),
+    name: 'New Provider', type: 'oidc', issuer: '',
+    client_id: '', client_secret: '', scopes: 'openid email profile',
+    default_role: 'readonly', role_claim: '', enabled: true,
+    claim_role_map: {}, auto_create: true,
+  });
+  renderOAuth();
+};
+
+document.getElementById('save-btn').addEventListener('click', async () => {
+  // existing save flow already runs; add oauth save on top
+  try {
+    const providers = OAUTH.providers.map(p => {
+      const map = {};
+      const lines = (p.claim_role_map_text || '').split('\n');
+      for (const line of lines) {
+        const i = line.indexOf('=');
+        if (i > 0) map[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+      }
+      const copy = { ...p };
+      delete copy.claim_role_map_text;
+      copy.claim_role_map = Object.keys(map).length ? map : (p.claim_role_map || {});
+      copy.auto_create = p.auto_create !== false;
+      return copy;
+    });
+    await nfw.api.put('/api/auth/oauth/set', {
+      oauth: { enabled: document.getElementById('oauth-enabled').checked, providers },
+    });
+    nfw.toast.ok('OAuth config staged');
+    loadOAuth();
+  } catch (e) { nfw.toast.err('OAuth: ' + e.message); }
+}, true);
+
+document.addEventListener('DOMContentLoaded', () => { loadOAuth(); });
+document.addEventListener('DOMContentLoaded', load);
+</script>
+{% endblock %}

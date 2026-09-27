@@ -1,0 +1,240 @@
+{% extends "base.html" %}
+{% block title %}Interfaces{% endblock %}
+{% block content %}
+<h1>Interface Assignments</h1>
+<p class="subtitle">Map physical devices to logical roles and configure IP addressing.</p>
+
+<div class="row between" style="margin-bottom:12px">
+  <span class="muted" id="status">Loading…</span>
+  <div class="row">
+    <button id="apply-btn" class="primary">Save &amp; Apply</button>
+    <button id="refresh-btn">Refresh</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Detected devices</h2>
+  <div id="devices"><div class="muted">Loading…</div></div>
+</div>
+
+<div class="card">
+  <h2>Role assignment</h2>
+  <div id="roles-form"></div>
+  <div id="save-result" class="mt-2"></div>
+</div>
+
+<div class="card">
+  <h2>Preview — systemd-networkd files</h2>
+  <pre class="code" id="preview" style="max-height:400px">—</pre>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let DEVS = [];      // [{device, state, mac, role, ipv4, ipv6, current_addrs}]
+let ROLES = {};     // {wan: "enp1s0", lan: "enp2s0", opt1: ...}
+let AUTO = {};
+
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+async function load() {
+  const r = await nfw.api.get('/api/network/ifaces');
+  DEVS = r.interfaces || [];
+  ROLES = r.roles || {};
+  AUTO = r.auto || {};
+  renderDevices();
+  renderRoleForm();
+  loadPreview();
+  document.getElementById('status').textContent =
+    `${DEVS.length} device(s) detected`;
+}
+
+function renderDevices() {
+  if (DEVS.length === 0) {
+    document.getElementById('devices').innerHTML = '<div class="muted">none</div>';
+    return;
+  }
+  const rows = DEVS.map(d => {
+    const addrs = (d.current_addrs || [])
+      .map(a => `${a.family} ${a.address}/${a.prefixlen}`).join('<br>');
+    const role = d.role ? `<span class="badge info">${esc(d.role)}</span>` : '';
+    const ipv4cfg = d.ipv4 ? `${d.ipv4.mode}${d.ipv4.mode === 'static' ? ' ' + (d.ipv4.address||'') + '/' + (d.ipv4.prefixlen||'') : ''}` : 'dhcp';
+    return `
+      <tr>
+        <td class="mono">${esc(d.device)}</td>
+        <td><span class="badge ${d.state === 'UP' ? 'ok' : 'warn'}">${esc(d.state)}</span></td>
+        <td>${role}</td>
+        <td class="mono">${esc(ipv4cfg)}</td>
+        <td class="mono">${addrs || '<span class="muted">no address</span>'}</td>
+        <td style="width:60px">
+          <button class="small" data-edit="${esc(d.device)}">Edit</button>
+        </td>
+      </tr>`;
+  }).join('');
+  document.getElementById('devices').innerHTML =
+    '<table class="data"><thead><tr><th>Device</th><th>State</th><th>Role</th><th>IPv4</th><th>Current addresses</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+  document.querySelectorAll('#devices button[data-edit]').forEach(b => {
+    b.addEventListener('click', () => editDevice(b.getAttribute('data-edit')));
+  });
+}
+
+function renderRoleForm() {
+  const roles = ['wan', 'lan', 'opt1', 'opt2', 'opt3', 'opt4'];
+  const options = ['<option value="">(unassigned)</option>', '<option value="auto">auto</option>']
+    .concat(DEVS.map(d => `<option value="${esc(d.device)}">${esc(d.device)} (${esc(d.state)})</option>`))
+    .join('');
+  const rows = roles.map(role => {
+    const val = ROLES[role] || (role === 'wan' || role === 'lan' ? 'auto' : '');
+    return `
+      <tr>
+        <td style="width:80px" class="mono">${role.toUpperCase()}</td>
+        <td>
+          <select data-role="${role}" style="width:100%">${options}</select>
+        </td>
+      </tr>`;
+  }).join('');
+  document.getElementById('roles-form').innerHTML =
+    '<table class="data">' + rows + '</table>';
+  // set values
+  roles.forEach(role => {
+    const el = document.querySelector(`select[data-role="${role}"]`);
+    if (el) {
+      const v = ROLES[role] || (role === 'wan' || role === 'lan' ? 'auto' : '');
+      el.value = v;
+    }
+  });
+}
+
+function collectRoles() {
+  const out = { wan: 'auto', lan: 'auto', opt: [] };
+  document.querySelectorAll('select[data-role]').forEach(el => {
+    const role = el.getAttribute('data-role');
+    const v = el.value;
+    if (role === 'wan') out.wan = v || 'auto';
+    else if (role === 'lan') out.lan = v || 'auto';
+    else if (v && v !== 'auto') out.opt.push({name: role, device: v});
+  });
+  return out;
+}
+
+async function loadPreview() {
+  try {
+    const r = await nfw.api.get('/api/network/ifaces-preview');
+    const files = r.files || [];
+    if (files.length === 0) {
+      document.getElementById('preview').textContent = '(no explicit interface config)';
+      return;
+    }
+    const text = files.map(f => `# ---- ${f.path} ----\n${f.content}`).join('\n\n');
+    document.getElementById('preview').textContent = text;
+  } catch (e) {
+    document.getElementById('preview').textContent = 'Preview error: ' + e.message;
+  }
+}
+
+async function editDevice(dev) {
+  const d = DEVS.find(x => x.device === dev);
+  if (!d) return;
+  const ipv4 = d.ipv4 || {mode:'dhcp'};
+  const ipv6 = d.ipv6 || {mode:'auto'};
+
+  const html = `
+    <label class="field"><span>Device</span>
+      <input type="text" value="${esc(dev)}" disabled>
+    </label>
+    <label class="field"><span>IPv4 mode</span>
+      <select name="v4mode">
+        <option value="dhcp">DHCP (auto)</option>
+        <option value="static">Static</option>
+        <option value="none">None</option>
+      </select>
+    </label>
+    <label class="field"><span>IPv4 address (blank if DHCP/none)</span>
+      <input type="text" name="v4addr" placeholder="192.168.10.1" value="${esc(ipv4.address||'')}">
+    </label>
+    <label class="field"><span>IPv4 prefix (e.g. 24)</span>
+      <input type="number" name="v4plen" min="1" max="32" value="${ipv4.prefixlen||''}">
+    </label>
+    <label class="field"><span>IPv4 gateway (optional)</span>
+      <input type="text" name="v4gw" placeholder="192.168.10.254" value="${esc(ipv4.gateway||'')}">
+    </label>
+    <label class="field"><span>IPv6 mode</span>
+      <select name="v6mode">
+        <option value="auto">Auto (SLAAC/RA)</option>
+        <option value="dhcp6">DHCPv6</option>
+        <option value="static">Static</option>
+        <option value="none">None</option>
+      </select>
+    </label>
+    <label class="field"><span>IPv6 address (if static)</span>
+      <input type="text" name="v6addr" value="${esc(ipv6.address||'')}">
+    </label>
+    <label class="field"><span>IPv6 prefix (if static)</span>
+      <input type="number" name="v6plen" min="1" max="128" value="${ipv6.prefixlen||''}">
+    </label>
+  `;
+
+  nfw.modal.open({title: 'Edit ' + dev, body: html});
+  const bg = document.querySelector('.modal-bg');
+  const m = bg.querySelector('.modal');
+
+  m.querySelector('[name=v4mode]').value = ipv4.mode || 'dhcp';
+  m.querySelector('[name=v6mode]').value = ipv6.mode || 'auto';
+
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  const cancel = document.createElement('button'); cancel.textContent = 'Cancel';
+  cancel.onclick = () => bg.remove();
+  const save = document.createElement('button'); save.className = 'primary'; save.textContent = 'Save';
+  save.onclick = async () => {
+    const body = {
+      config: {
+        ipv4: {
+          mode: m.querySelector('[name=v4mode]').value,
+          address: m.querySelector('[name=v4addr]').value.trim() || null,
+          prefixlen: parseInt(m.querySelector('[name=v4plen]').value) || null,
+          gateway: m.querySelector('[name=v4gw]').value.trim() || null,
+        },
+        ipv6: {
+          mode: m.querySelector('[name=v6mode]').value,
+          address: m.querySelector('[name=v6addr]').value.trim() || null,
+          prefixlen: parseInt(m.querySelector('[name=v6plen]').value) || null,
+        },
+      },
+    };
+    try {
+      await nfw.api.put('/api/network/ifaces/' + encodeURIComponent(dev), body);
+      nfw.toast.ok('Staged ' + dev);
+      bg.remove();
+      load();
+    } catch (e) { nfw.toast.err(e.message); }
+  };
+  actions.appendChild(cancel); actions.appendChild(save);
+  m.appendChild(actions);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  load();
+  document.getElementById('refresh-btn').addEventListener('click', load);
+  document.getElementById('apply-btn').addEventListener('click', async () => {
+    const el = document.getElementById('save-result');
+    el.innerHTML = '<span class="muted">Applying…</span>';
+    try {
+      // 1. Save roles
+      const net = collectRoles();
+      await nfw.api.post('/api/network/apply', {network: net});
+      // 2. Apply per-iface config
+      const r = await nfw.api.post('/api/network/ifaces-apply');
+      el.innerHTML =
+        '<span class="badge ok">saved</span> ' +
+        (r.firewall_applied
+          ? '<span class="badge ok">firewall applied</span>'
+          : '<span class="badge warn">firewall: ' + esc(r.firewall_error||'?') + '</span>');
+      nfw.toast.ok('Applied');
+      load();
+    } catch (e) {
+      el.innerHTML = '<span class="badge err">' + esc(e.message) + '</span>';
+    }
+  });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Ruleset Preview{% endblock %}
+{% block content %}
+<h1>Ruleset Preview</h1>
+<p class="subtitle">This is the exact nftables config that would be applied</p>
+<div class="row between" style="margin-bottom:12px">
+  <button id="refresh-btn">Refresh</button>
+  <span id="valid-badge"></span>
+</div>
+<div class="card">
+  <pre class="code" id="ruleset" style="max-height:700px">Loading…</pre>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+async function load() {
+  try {
+    const r = await nfw.api.get('/api/firewall/preview');
+    document.getElementById('ruleset').textContent = r.ruleset || '';
+    const badge = document.getElementById('valid-badge');
+    if (r.valid) badge.innerHTML = '<span class="badge ok">nft -c OK</span>';
+    else badge.innerHTML = '<span class="badge err">' + (r.error || 'invalid') + '</span>';
+  } catch (e) { document.getElementById('ruleset').textContent = 'Failed: ' + e.message; }
+}
+document.addEventListener('DOMContentLoaded', () => {
+  load();
+  document.getElementById('refresh-btn').addEventListener('click', load);
+});
+</script>
+{% endblock %}

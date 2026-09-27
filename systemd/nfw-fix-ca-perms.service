@@ -1,0 +1,14 @@
+[Unit]
+Description=Fix NFW CA file permissions (runs outside API sandbox)
+DefaultDependencies=no
+Before=nfw-api.service nfw-configd.service
+After=local-fs.target
+Wants=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/nfw-fix-ca-perms.sh
+
+[Install]
+WantedBy=multi-user.target

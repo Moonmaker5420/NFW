@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}HAProxy{% endblock %}
+{% block content %}
+<h1>HAProxy Reverse Proxy</h1>
+<p class="subtitle">Load balance and reverse proxy HTTP/HTTPS services</p>
+
+<div class="row between" style="margin-bottom:12px">
+  <label class="row" style="gap:6px"><input type="checkbox" id="enabled"> Enabled</label>
+  <div class="row">
+    <button id="add-fe">+ Frontend</button>
+    <button id="add-be">+ Backend</button>
+    <button id="preview">Preview</button>
+    <button id="apply-btn" class="primary">Save &amp; Apply</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Frontends</h2>
+  <div id="fes"></div>
+</div>
+<div class="card">
+  <h2>Backends</h2>
+  <div id="bes"></div>
+</div>
+<div class="card" id="preview-card" style="display:none">
+  <h2>Preview</h2>
+  <pre class="code" id="preview-text" style="max-height:400px"></pre>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let CFG = {};
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+async function load() {
+  const r = await nfw.api.get('/api/advanced/haproxy');
+  CFG = r.config || {};
+  CFG.frontends = CFG.frontends || [];
+  CFG.backends = CFG.backends || [];
+  document.getElementById('enabled').checked = !!CFG.enabled;
+  render();
+}
+function render() {
+  document.getElementById('fes').innerHTML = CFG.frontends.length === 0
+    ? '<div class="muted">No frontends</div>'
+    : CFG.frontends.map((f,i) => `
+        <div class="card" style="margin:8px 0">
+          <div class="row between">
+            <div class="row" style="gap:8px">
+              <input type="text" value="${esc(f.name||'')}" onchange="CFG.frontends[${i}].name=this.value" placeholder="name" style="width:140px">
+              <span class="muted">:</span>
+              <input type="number" value="${f.bind_port||80}" onchange="CFG.frontends[${i}].bind_port=parseInt(this.value)" style="width:80px">
+            </div>
+            <button class="small danger" onclick="CFG.frontends.splice(${i},1);render()">Del</button>
+          </div>
+        </div>`).join('');
+  document.getElementById('bes').innerHTML = CFG.backends.length === 0
+    ? '<div class="muted">No backends</div>'
+    : CFG.backends.map((b,i) => `
+        <div class="card" style="margin:8px 0">
+          <div class="row between">
+            <div class="row" style="gap:8px">
+              <input type="text" value="${esc(b.name||'')}" onchange="CFG.backends[${i}].name=this.value" placeholder="backend name" style="width:140px">
+            </div>
+            <button class="small danger" onclick="CFG.backends.splice(${i},1);render()">Del</button>
+          </div>
+          <div class="mt-2"><strong>Servers:</strong></div>
+          ${(b.servers||[]).map((s,j) => `
+            <div class="row" style="gap:6px;margin-top:4px">
+              <input type="text" value="${esc(s.address||'')}" onchange="CFG.backends[${i}].servers[${j}].address=this.value" placeholder="IP" style="width:140px">
+              <input type="number" value="${s.port||8080}" onchange="CFG.backends[${i}].servers[${j}].port=parseInt(this.value)" placeholder="port" style="width:80px">
+            </div>`).join('')}
+          <button class="small mt-2" onclick="CFG.backends[${i}].servers=CFG.backends[${i}].servers||[];CFG.backends[${i}].servers.push({name:'srv'+Date.now(),address:'127.0.0.1',port:8080});render()">+ Server</button>
+        </div>`).join('');
+}
+document.getElementById('add-fe').onclick = () => { CFG.frontends.push({name:'web'+Date.now(),bind_port:80}); render(); };
+document.getElementById('add-be').onclick = () => { CFG.backends.push({name:'app'+Date.now(),servers:[],balance:'roundrobin'}); render(); };
+document.getElementById('preview').onclick = async () => {
+  try {
+    await nfw.api.put('/api/advanced/haproxy', {config: CFG});
+    const r = await nfw.api.get('/api/advanced/haproxy/preview');
+    document.getElementById('preview-text').textContent = r.config;
+    document.getElementById('preview-card').style.display = '';
+  } catch (e) { nfw.toast.err(e.message); }
+};
+document.getElementById('apply-btn').onclick = async () => {
+  CFG.enabled = document.getElementById('enabled').checked;
+  try {
+    await nfw.api.put('/api/advanced/haproxy', {config: CFG});
+    const r = await nfw.api.post('/api/advanced/haproxy/apply');
+    if (r.applied === false) nfw.toast.err('Config invalid: ' + r.error);
+    else nfw.toast.ok('Applied');
+    load();
+  } catch (e) { nfw.toast.err(e.message); }
+};
+document.addEventListener('DOMContentLoaded', load);
+</script>
+{% endblock %}

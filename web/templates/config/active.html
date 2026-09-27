@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Configuration{% endblock %}
+{% block content %}
+<h1>Configuration</h1>
+<p class="subtitle">Active config and pending staging</p>
+
+<div class="grid cols-2">
+  <div class="card">
+    <h2>Active revision</h2>
+    <div id="active-info"><div class="muted">Loading…</div></div>
+  </div>
+  <div class="card">
+    <h2>Staging</h2>
+    <div id="staging-info"><div class="muted">Nothing staged</div></div>
+    <div class="row mt-2">
+      <button id="discard-btn" class="danger small" disabled>Discard staging</button>
+      <button id="commit-btn" class="primary small" disabled>Commit</button>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Config JSON</h2>
+  <pre class="code" id="cfg-json">Loading…</pre>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+  async function refresh() {
+    try {
+      const r = await nfw.api.get('/api/config/');
+      const cfg = r.config;
+      document.getElementById('cfg-json').textContent = JSON.stringify(cfg, null, 2);
+      if (r.active_revision) {
+        const a = r.active_revision;
+        document.getElementById('active-info').innerHTML = `
+          <div class="stat-value small mono">${a.revision}</div>
+          <div class="stat-sub">by ${a.author} — ${new Date(a.ts*1000).toLocaleString()}</div>
+          <div class="stat-sub muted">${a.message || '(no message)'}</div>`;
+      }
+      const staged = r.staging;
+      if (staged) {
+        document.getElementById('staging-info').innerHTML =
+          `<div class="muted">A staged revision exists</div>`;
+        document.getElementById('discard-btn').disabled = false;
+        document.getElementById('commit-btn').disabled = false;
+      } else {
+        document.getElementById('staging-info').innerHTML =
+          `<div class="muted">Nothing staged</div>`;
+        document.getElementById('discard-btn').disabled = true;
+        document.getElementById('commit-btn').disabled = true;
+      }
+    } catch (e) {
+      nfw.toast.err('Failed to load config: ' + e.message);
+    }
+  }
+  refresh();
+
+  document.getElementById('discard-btn').addEventListener('click', async () => {
+    try { await nfw.api.post('/api/config/discard'); nfw.toast.ok('Staging discarded'); refresh(); }
+    catch (e) { nfw.toast.err(e.message); }
+  });
+  document.getElementById('commit-btn').addEventListener('click', async () => {
+    try {
+      const r = await nfw.api.post('/api/config/commit', { message: 'via GUI' });
+      nfw.toast.ok('Committed: ' + r.revision.revision);
+      refresh();
+    } catch (e) { nfw.toast.err(e.message); }
+  });
+});
+</script>
+{% endblock %}

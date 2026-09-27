@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Misc{% endblock %}
+{% block content %}
+<h1>Miscellaneous</h1>
+<p class="subtitle">Dynamic DNS, Wake-on-LAN, SNMP</p>
+
+<div class="card">
+  <h2>Wake-on-LAN</h2>
+  <div class="row" style="gap:8px">
+    <input type="text" id="wol-mac" placeholder="aa:bb:cc:dd:ee:ff" style="width:200px">
+    <input type="text" id="wol-bcast" placeholder="broadcast (optional)" style="width:200px">
+    <button id="wol-go" class="primary">Wake</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Dynamic DNS</h2>
+  <div id="ddns-entries"><div class="muted">Loading…</div></div>
+  <button id="ddns-add" class="small mt-2">+ Add entry</button>
+  <button id="ddns-save" class="small primary mt-2">Save</button>
+  <button id="ddns-now" class="small mt-2">Update now</button>
+</div>
+
+<div class="card">
+  <h2>SNMP</h2>
+  <div class="row between">
+    <label class="row" style="gap:6px"><input type="checkbox" id="snmp-enabled"> Enabled</label>
+    <button id="snmp-apply" class="primary">Apply</button>
+  </div>
+  <label class="field mt-2"><span>Location</span><input type="text" id="snmp-location"></label>
+  <label class="field"><span>Contact</span><input type="text" id="snmp-contact"></label>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let DDNS = {}, SNMP = {};
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+document.getElementById('wol-go').onclick = async () => {
+  try {
+    const r = await nfw.api.post('/api/advanced/wol', {
+      mac: document.getElementById('wol-mac').value.trim(),
+      broadcast: document.getElementById('wol-bcast').value.trim(),
+    });
+    nfw.toast.ok(r.ok ? 'Magic packet sent' : 'Failed');
+  } catch (e) { nfw.toast.err(e.message); }
+};
+
+async function loadDDNS() {
+  const r = await nfw.api.get('/api/advanced/ddns');
+  DDNS = r.config || {entries: []};
+  DDNS.entries = DDNS.entries || [];
+  renderDDNS();
+}
+function renderDDNS() {
+  document.getElementById('ddns-entries').innerHTML = DDNS.entries.length === 0
+    ? '<div class="muted">No entries</div>'
+    : DDNS.entries.map((e,i) => `
+      <div class="row" style="gap:6px;margin-bottom:6px">
+        <select onchange="DDNS.entries[${i}].provider=this.value">
+          ${['duckdns','noip','freedns','custom'].map(p=>`<option value="${p}"${e.provider===p?' selected':''}>${p}</option>`).join('')}
+        </select>
+        <input type="text" placeholder="host" value="${esc(e.host||'')}" onchange="DDNS.entries[${i}].host=this.value" style="flex:1">
+        <input type="text" placeholder="token/user" value="${esc(e.token||e.user||'')}" onchange="DDNS.entries[${i}].token=this.value" style="flex:1">
+        <button class="small danger" onclick="DDNS.entries.splice(${i},1);renderDDNS()">×</button>
+      </div>`).join('');
+}
+document.getElementById('ddns-add').onclick = () => { DDNS.entries.push({provider:'duckdns',host:'',token:'',enabled:true}); renderDDNS(); };
+document.getElementById('ddns-save').onclick = async () => {
+  try { await nfw.api.put('/api/advanced/ddns', {config: DDNS}); nfw.toast.ok('Saved'); }
+  catch (e) { nfw.toast.err(e.message); }
+};
+document.getElementById('ddns-now').onclick = async () => {
+  try { const r = await nfw.api.post('/api/advanced/ddns/update'); nfw.toast.ok(`Updated ${r.updated} entries`); }
+  catch (e) { nfw.toast.err(e.message); }
+};
+
+async function loadSNMP() {
+  const r = await nfw.api.get('/api/advanced/snmp');
+  SNMP = r.config || {};
+  document.getElementById('snmp-enabled').checked = !!SNMP.enabled;
+  document.getElementById('snmp-location').value = SNMP.location || '';
+  document.getElementById('snmp-contact').value = SNMP.contact || '';
+}
+document.getElementById('snmp-apply').onclick = async () => {
+  SNMP.enabled = document.getElementById('snmp-enabled').checked;
+  SNMP.location = document.getElementById('snmp-location').value;
+  SNMP.contact = document.getElementById('snmp-contact').value;
+  try {
+    await nfw.api.put('/api/advanced/snmp', {config: SNMP});
+    await nfw.api.post('/api/advanced/snmp/apply');
+    nfw.toast.ok('SNMP applied');
+  } catch (e) { nfw.toast.err(e.message); }
+};
+
+document.addEventListener('DOMContentLoaded', () => { loadDDNS(); loadSNMP(); });
+</script>
+{% endblock %}

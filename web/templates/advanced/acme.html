@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}ACME / Let's Encrypt{% endblock %}
+{% block content %}
+<h1>ACME Certificates</h1>
+<p class="subtitle">Let's Encrypt TLS certificates for services (HAProxy, WebGUI, etc.)</p>
+
+<div class="row between" style="margin-bottom:12px">
+  <button id="issue-btn" class="primary">+ Issue certificate</button>
+  <div class="row">
+    <button id="renew-btn">Renew all</button>
+    <button id="refresh">Refresh</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Certificates</h2>
+  <div id="certs"><div class="muted">Loading…</div></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+async function load() {
+  try {
+    const r = await nfw.api.get('/api/advanced/acme');
+    const certs = r.certs || [];
+    if (!certs.length) { document.getElementById('certs').innerHTML = '<div class="muted">No certificates</div>'; return; }
+    document.getElementById('certs').innerHTML =
+      '<table class="data"><thead><tr><th>Domain</th><th>Expires</th><th>Fullchain</th></tr></thead><tbody>' +
+      certs.map(c => `<tr><td class="mono">${esc(c.name)}</td><td>${esc(c.expires)}</td><td class="mono" style="font-size:11px">${esc(c.fullchain)}</td></tr>`).join('') +
+      '</tbody></table>';
+  } catch (e) { nfw.toast.err(e.message); }
+}
+document.getElementById('refresh').onclick = load;
+document.getElementById('renew-btn').onclick = async () => {
+  if (!confirm('Renew all certificates?')) return;
+  try { await nfw.api.post('/api/advanced/acme/renew'); nfw.toast.ok('Renewal complete'); load(); }
+  catch (e) { nfw.toast.err(e.message); }
+};
+document.getElementById('issue-btn').onclick = () => {
+  const html = `
+    <label class="field"><span>Domain</span><input type="text" name="domain" placeholder="example.com"></label>
+    <label class="field"><span>Email</span><input type="text" name="email" placeholder="admin@example.com"></label>
+    <label class="field"><span>Webroot</span><input type="text" name="webroot" value="/var/www/html"></label>
+    <label class="row"><input type="checkbox" name="staging"> Use staging (test)</label>
+  `;
+  nfw.modal.open({title: 'Issue certificate', body: html});
+  const bg = document.querySelector('.modal-bg');
+  const m = bg.querySelector('.modal');
+  const acts = document.createElement('div'); acts.className = 'actions';
+  const cancel = document.createElement('button'); cancel.textContent='Cancel'; cancel.onclick=()=>bg.remove();
+  const save = document.createElement('button'); save.className='primary'; save.textContent='Issue';
+  save.onclick = async () => {
+    try {
+      await nfw.api.post('/api/advanced/acme/issue', {
+        domain: m.querySelector('[name=domain]').value.trim(),
+        email: m.querySelector('[name=email]').value.trim(),
+        webroot: m.querySelector('[name=webroot]').value.trim(),
+        staging: m.querySelector('[name=staging]').checked,
+      });
+      nfw.toast.ok('Certificate issued'); bg.remove(); load();
+    } catch (e) { nfw.toast.err(e.message); }
+  };
+  acts.appendChild(cancel); acts.appendChild(save); m.appendChild(acts);
+};
+document.addEventListener('DOMContentLoaded', load);
+</script>
+{% endblock %}

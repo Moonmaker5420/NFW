@@ -1,0 +1,433 @@
+{% extends "base.html" %}
+{% block title %}VPN{% endblock %}
+{% block content %}
+<h1>VPN</h1>
+<p class="subtitle">WireGuard, OpenVPN, IPsec</p>
+
+<div class="row" style="gap:8px;margin-bottom:16px">
+  <button class="vpn-tab primary" data-tab="wg">WireGuard</button>
+  <button class="vpn-tab" data-tab="ovpn">OpenVPN</button>
+  <button class="vpn-tab" data-tab="ipsec">IPsec</button>
+</div>
+
+<!-- ============ WIREGUARD ============ -->
+<div id="tab-wg" class="vpn-panel">
+  <div class="card">
+    <h2>WireGuard Instances <button id="wg-add" class="small primary">+ Add instance</button></h2>
+    <div id="wg-tbl"><div class="muted">Loading…</div></div>
+  </div>
+  <div class="card">
+    <div class="row between">
+      <span class="muted">Apply writes config files and starts wg-quick.</span>
+      <div class="row">
+        <button id="wg-preview">Preview</button>
+        <button id="wg-apply" class="primary">Apply</button>
+        <button id="wg-refresh">Refresh</button>
+      </div>
+    </div>
+  </div>
+  <div class="card" id="wg-preview-card" style="display:none">
+    <h2>Preview</h2>
+    <pre class="code" id="wg-preview-text" style="max-height:400px"></pre>
+  </div>
+</div>
+
+<!-- ============ OPENVPN ============ -->
+<div id="tab-ovpn" class="vpn-panel" style="display:none">
+  <div class="card">
+    <h2>OpenVPN Servers <button id="ovpn-add" class="small primary">+ Add server</button></h2>
+    <div id="ovpn-tbl"><div class="muted">Loading…</div></div>
+  </div>
+  <div class="card">
+    <div class="row between">
+      <span class="muted">First apply initializes the CA + server certs (may take 30s).</span>
+      <div class="row">
+        <button id="ovpn-apply" class="primary">Apply</button>
+        <button id="ovpn-refresh">Refresh</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ IPSEC ============ -->
+<div id="tab-ipsec" class="vpn-panel" style="display:none">
+  <div class="card">
+    <h2>IPsec Tunnels <button id="ipsec-add" class="small primary">+ Add tunnel</button></h2>
+    <div id="ipsec-tbl"><div class="muted">Loading…</div></div>
+  </div>
+  <div class="card">
+    <div class="row between">
+      <span class="muted">Uses strongSwan swanctl.</span>
+      <div class="row">
+        <button id="ipsec-apply" class="primary">Apply</button>
+        <button id="ipsec-refresh">Refresh</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+let WG = [], OVPN = [], IPSEC = [];
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+/* ---- tabs ---- */
+document.querySelectorAll('.vpn-tab').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.vpn-tab').forEach(x => x.classList.remove('primary'));
+  b.classList.add('primary');
+  document.querySelectorAll('.vpn-panel').forEach(p => p.style.display = 'none');
+  document.getElementById('tab-' + b.dataset.tab).style.display = '';
+  if (b.dataset.tab === 'wg') loadWG();
+  if (b.dataset.tab === 'ovpn') loadOVPN();
+  if (b.dataset.tab === 'ipsec') loadIPSEC();
+}));
+
+/* ============ WireGuard ============ */
+async function loadWG() {
+  try {
+    const r = await nfw.api.get('/api/vpn/wireguard');
+    WG = r.instances || [];
+    renderWG(r.status);
+  } catch (e) { nfw.toast.err(e.message); }
+}
+
+function renderWG(status) {
+  if (WG.length === 0) {
+    document.getElementById('wg-tbl').innerHTML = '<div class="muted">No instances</div>';
+    return;
+  }
+  const rows = WG.map(i => {
+    const peers = (i.peers || []).length;
+    return `
+      <tr>
+        <td class="mono">${esc(i.interface)}</td>
+        <td class="mono">${esc(i.address)}</td>
+        <td class="num">${i.listen_port}</td>
+        <td class="num">${peers}</td>
+        <td>
+          <button class="small" data-wg-peers="${esc(i.id)}">Peers</button>
+          <button class="small danger" data-wg-del="${esc(i.id)}">Del</button>
+        </td>
+      </tr>`;
+  }).join('');
+  document.getElementById('wg-tbl').innerHTML =
+    '<table class="data"><thead><tr><th>Interface</th><th>Address</th><th>Port</th><th>Peers</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+  document.querySelectorAll('[data-wg-del]').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm('Delete instance?')) return;
+    try { await nfw.api.del('/api/vpn/wireguard/instances/' + b.getAttribute('data-wg-del')); loadWG(); }
+    catch (e) { nfw.toast.err(e.message); }
+  }));
+  document.querySelectorAll('[data-wg-peers]').forEach(b => b.addEventListener('click', () => showPeers(b.getAttribute('data-wg-peers'))));
+  document.querySelectorAll('[data-wg-del]').forEach(b => b.addEventListener('click', async () => {
+    const id = b.getAttribute('data-wg-del');
+    const inst = WG.find(x => x.id === id);
+    const label = inst ? inst.interface : id;
+    if (!confirm('Delete WireGuard instance "' + label + '"?\n\nThis will run wg-quick down and remove the config file.')) return;
+    try {
+      await nfw.api.del('/api/vpn/wireguard/instances/' + id);
+      nfw.toast.ok('Deleted ' + label);
+    } catch (e) {
+      // Ignore "not found" — it means it's already gone, which is the goal
+      if (e.status !== 404) {
+        nfw.toast.err(e.message);
+      }
+    } finally {
+      // Always refresh to reflect current state
+      loadWG();
+    }
+  }));
+}
+
+function showPeers(id) {
+  const inst = WG.find(x => x.id === id);
+  if (!inst) return;
+  const peers = inst.peers || [];
+  const rows = peers.map(p => `
+    <tr>
+      <td class="mono">${esc(p.name||'')}</td>
+      <td class="mono" style="font-size:11px">${esc((p.public_key||'').slice(0,20))}…</td>
+      <td class="mono">${esc((p.allowed_ips||[]).join(','))}</td>
+      <td>
+        <button class="small" data-wg-qr="${esc(id)}|${esc(p.id)}">QR</button>
+        <button class="small danger" data-wg-pdel="${esc(id)}|${esc(p.id)}">Del</button>
+      </td>
+    </tr>`).join('');
+  const html = `
+    <table class="data"><thead><tr><th>Name</th><th>PubKey</th><th>AllowedIPs</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="row mt-2"><button class="small primary" id="wg-add-peer">+ Add peer</button></div>
+    <div id="wg-qr-area" class="mt-2"></div>
+  `;
+  nfw.modal.open({title: 'Peers — ' + inst.interface, body: html});
+  const bg = document.querySelector('.modal-bg');
+  const m = bg.querySelector('.modal');
+  m.querySelector('#wg-add-peer').onclick = () => addPeer(id);
+  document.querySelectorAll('[data-wg-pdel]').forEach(b => b.addEventListener('click', async () => {
+    const [iid, pid] = b.getAttribute('data-wg-pdel').split('|');
+    if (!confirm('Delete peer?\n\nThis will run "wg set <iface> peer <pubkey> remove".')) return;
+    try {
+      await nfw.api.del('/api/vpn/wireguard/peers', {instance_id: iid, peer_id: pid});
+      nfw.toast.ok('Peer removed');
+      bg.remove();
+      loadWG();
+    } catch (e) { nfw.toast.err(e.message); }
+  }));
+  document.querySelectorAll('[data-wg-qr]').forEach(b => b.addEventListener('click', async () => {
+    const [iid, pid] = b.getAttribute('data-wg-qr').split('|');
+    try {
+      const r = await nfw.api.post('/api/vpn/wireguard/qr', {instance_id: iid, peer_id: pid});
+      const area = m.querySelector('#wg-qr-area');
+      area.innerHTML = `<div style="background:#fff;padding:8px;border-radius:6px;display:inline-block">
+        <img src="data:image/png;base64,${r.qr_png_b64}" style="display:block;width:240px;height:240px">
+      </div>
+      <pre class="code mt-2" style="max-height:200px">${esc(r.config)}</pre>`;
+    } catch (e) { nfw.toast.err(e.message); }
+  }));
+}
+
+function addPeer(iid) {
+  var body = document.createElement('div');
+  body.innerHTML = [
+    '<label class="field"><span>Peer name</span>',
+    '<input type="text" name="name" placeholder="laptop"></label>',
+    '<label class="field"><span>Client address</span>',
+    '<input type="text" name="client_address" value="10.7.0.2/32"></label>',
+    '<label class="field"><span>Allowed IPs (comma-separated)</span>',
+    '<input type="text" name="allowed_ips" value="10.7.0.2/32"></label>',
+  ].join('');
+
+  nfw.modal.open({
+    title: 'Add peer',
+    body: body,
+    actions: [
+      { label: 'Cancel', onClick: function (e, close) { close(); } },
+      { label: 'Save', className: 'primary', onClick: async function (e, close) {
+          try {
+            await nfw.api.post('/api/vpn/wireguard/peers', {
+              instance_id: iid,
+              peer: {
+                name: body.querySelector('[name=name]').value.trim(),
+                client_address: body.querySelector('[name=client_address]').value.trim(),
+                allowed_ips: body.querySelector('[name=allowed_ips]').value
+                  .split(',').map(function (s) { return s.trim(); })
+                  .filter(function (s) { return s; }),
+              },
+            });
+            nfw.toast.ok('Peer added');
+            close();
+            loadWG();
+          } catch (e) { nfw.toast.err(e.message); }
+        }
+      }
+    ]
+  });
+}
+
+document.getElementById('wg-add')?.addEventListener('click', () => {
+  const html = `
+    <label class="field"><span>Interface name</span><input type="text" name="interface" value="wg0"></label>
+    <label class="field"><span>Address (server tunnel IP)</span><input type="text" name="address" value="10.7.0.1/24"></label>
+    <label class="field"><span>Listen port</span><input type="number" name="listen_port" value="51820"></label>
+    <label class="field"><span>Public endpoint host (for QR configs)</span><input type="text" name="endpoint_host" placeholder="vpn.example.com"></label>
+    <label class="field"><span>DNS (for clients)</span><input type="text" name="dns" value="1.1.1.1"></label>
+  `;
+  nfw.modal.open({title: 'Add WireGuard instance', body: html});
+  const bg = document.querySelector('.modal-bg');
+  const m = bg.querySelector('.modal');
+  const acts = document.createElement('div'); acts.className = 'actions';
+  const cancel = document.createElement('button'); cancel.textContent = 'Cancel'; cancel.onclick = () => bg.remove();
+  const save = document.createElement('button'); save.className = 'primary'; save.textContent = 'Save';
+  save.onclick = async () => {
+    try {
+      await nfw.api.post('/api/vpn/wireguard/instances', {
+        instance: {
+          interface: m.querySelector('[name=interface]').value.trim(),
+          address: m.querySelector('[name=address]').value.trim(),
+          listen_port: parseInt(m.querySelector('[name=listen_port]').value),
+          endpoint_host: m.querySelector('[name=endpoint_host]').value.trim(),
+          dns: [m.querySelector('[name=dns]').value.trim()],
+          peers: [],
+        },
+      });
+      nfw.toast.ok('Instance created'); bg.remove(); loadWG();
+    } catch (e) { nfw.toast.err(e.message); }
+  };
+  acts.appendChild(cancel); acts.appendChild(save); m.appendChild(acts);
+});
+
+document.getElementById('wg-refresh')?.addEventListener('click', loadWG);
+document.getElementById('wg-preview')?.addEventListener('click', async () => {
+  try {
+    const r = await nfw.api.get('/api/vpn/wireguard/preview');
+    document.getElementById('wg-preview-text').textContent = (r.files||[]).map(f => `### ${f.path}\n${f.content||f.error}`).join('\n\n');
+    document.getElementById('wg-preview-card').style.display = '';
+  } catch (e) { nfw.toast.err(e.message); }
+});
+document.getElementById('wg-apply')?.addEventListener('click', async () => {
+  try { await nfw.api.post('/api/vpn/wireguard/apply'); nfw.toast.ok('Applied'); loadWG(); }
+  catch (e) { nfw.toast.err(e.message); }
+});
+
+/* ============ OpenVPN ============ */
+async function loadOVPN() {
+  try {
+    const r = await nfw.api.get('/api/vpn/openvpn');
+    OVPN = r.servers || [];
+    renderOVPN();
+  } catch (e) { nfw.toast.err(e.message); }
+}
+function renderOVPN() {
+  if (OVPN.length === 0) {
+    document.getElementById('ovpn-tbl').innerHTML = '<div class="muted">No servers</div>';
+    return;
+  }
+  const rows = OVPN.map(s => `
+    <tr>
+      <td class="mono">${esc(s.name)}</td>
+      <td>${esc(s.proto)}/${esc(s.port)}</td>
+      <td class="mono">${esc(s.subnet)}</td>
+      <td class="num">${(s.clients||[]).length}</td>
+      <td>
+        <button class="small" data-ovpn-clients="${esc(s.id)}">Clients</button>
+        <button class="small danger" data-ovpn-del="${esc(s.id)}">Del</button>
+      </td>
+    </tr>`).join('');
+  document.getElementById('ovpn-tbl').innerHTML =
+    '<table class="data"><thead><tr><th>Name</th><th>Proto/Port</th><th>Subnet</th><th>Clients</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+  document.querySelectorAll('[data-ovpn-del]').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm('Delete server?')) return;
+    try { await nfw.api.del('/api/vpn/openvpn/servers/' + b.getAttribute('data-ovpn-del')); loadOVPN(); }
+    catch (e) { nfw.toast.err(e.message); }
+  }));
+  document.querySelectorAll('[data-ovpn-clients]').forEach(b => b.addEventListener('click', () => {
+    const s = OVPN.find(x => x.id === b.getAttribute('data-ovpn-clients'));
+    showOvpnClients(s);
+  }));
+}
+function showOvpnClients(s) {
+  const clients = s.clients || [];
+  const rows = clients.map(c => `
+    <tr>
+      <td class="mono">${esc(c.name)}</td>
+      <td><a href="/api/vpn/openvpn/export/${esc(c.name)}" download="${esc(c.name)}.ovpn">Download</a></td>
+    </tr>`).join('');
+  nfw.modal.open({title: 'Clients — ' + s.name, body:
+    '<table class="data"><thead><tr><th>Name</th><th>Config</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+    '<div class="row mt-2"><input type="text" id="new-client-name" placeholder="client name" style="flex:1">' +
+    '<button class="small primary" id="add-ovpn-client">+ Add client</button></div>'});
+  const bg = document.querySelector('.modal-bg');
+  const m = bg.querySelector('.modal');
+  m.querySelector('#add-ovpn-client').onclick = async () => {
+    const name = m.querySelector('#new-client-name').value.trim();
+    if (!name) return;
+    try { await nfw.api.post('/api/vpn/openvpn/clients', {server_id: s.id, name}); nfw.toast.ok('Client queued (apply to generate cert)'); bg.remove(); loadOVPN(); }
+    catch (e) { nfw.toast.err(e.message); }
+  };
+}
+document.getElementById('ovpn-add')?.addEventListener('click', () => {
+  const html = `
+    <label class="field"><span>Server name</span><input type="text" name="name" value="server"></label>
+    <label class="field"><span>Protocol</span><select name="proto"><option>udp</option><option>tcp</option></select></label>
+    <label class="field"><span>Port</span><input type="number" name="port" value="1194"></label>
+    <label class="field"><span>Subnet (tunnel)</span><input type="text" name="subnet" value="10.8.0.0"></label>
+    <label class="field"><span>Netmask</span><input type="text" name="netmask" value="255.255.255.0"></label>
+    <label class="field"><span>Public endpoint host</span><input type="text" name="endpoint_host" placeholder="vpn.example.com"></label>
+  `;
+  nfw.modal.open({title: 'Add OpenVPN server', body: html});
+  const bg = document.querySelector('.modal-bg');
+  const m = bg.querySelector('.modal');
+  const acts = document.createElement('div'); acts.className = 'actions';
+  const cancel = document.createElement('button'); cancel.textContent = 'Cancel'; cancel.onclick = () => bg.remove();
+  const save = document.createElement('button'); save.className = 'primary'; save.textContent = 'Save';
+  save.onclick = async () => {
+    try {
+      await nfw.api.post('/api/vpn/openvpn/servers', {server: {
+        name: m.querySelector('[name=name]').value.trim(),
+        proto: m.querySelector('[name=proto]').value,
+        port: parseInt(m.querySelector('[name=port]').value),
+        subnet: m.querySelector('[name=subnet]').value.trim(),
+        netmask: m.querySelector('[name=netmask]').value.trim(),
+        endpoint_host: m.querySelector('[name=endpoint_host]').value.trim(),
+        clients: [],
+      }});
+      nfw.toast.ok('Server created'); bg.remove(); loadOVPN();
+    } catch (e) { nfw.toast.err(e.message); }
+  };
+  acts.appendChild(cancel); acts.appendChild(save); m.appendChild(acts);
+});
+document.getElementById('ovpn-refresh')?.addEventListener('click', loadOVPN);
+document.getElementById('ovpn-apply')?.addEventListener('click', async () => {
+  if (!confirm('Apply OpenVPN config? First run initializes CA and may take 30s.')) return;
+  nfw.toast.info('Initializing PKI, please wait…');
+  try { await nfw.api.post('/api/vpn/openvpn/apply'); nfw.toast.ok('Applied'); loadOVPN(); }
+  catch (e) { nfw.toast.err(e.message); }
+});
+
+/* ============ IPsec ============ */
+async function loadIPSEC() {
+  try {
+    const r = await nfw.api.get('/api/vpn/ipsec');
+    IPSEC = r.tunnels || [];
+    renderIPSEC();
+  } catch (e) { nfw.toast.err(e.message); }
+}
+function renderIPSEC() {
+  if (IPSEC.length === 0) {
+    document.getElementById('ipsec-tbl').innerHTML = '<div class="muted">No tunnels</div>';
+    return;
+  }
+  const rows = IPSEC.map(t => `
+    <tr>
+      <td class="mono">${esc(t.name)}</td>
+      <td class="mono">${esc(t.local_addr)} → ${esc(t.remote_addr)}</td>
+      <td class="mono">${esc(t.local_ts||'')} / ${esc(t.remote_ts||'')}</td>
+      <td><button class="small danger" data-ipsec-del="${esc(t.id)}">Del</button></td>
+    </tr>`).join('');
+  document.getElementById('ipsec-tbl').innerHTML =
+    '<table class="data"><thead><tr><th>Name</th><th>Endpoint</th><th>Traffic selectors</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+  document.querySelectorAll('[data-ipsec-del]').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm('Delete tunnel?')) return;
+    try { await nfw.api.del('/api/vpn/ipsec/tunnels/' + b.getAttribute('data-ipsec-del')); loadIPSEC(); }
+    catch (e) { nfw.toast.err(e.message); }
+  }));
+}
+document.getElementById('ipsec-add')?.addEventListener('click', () => {
+  const html = `
+    <label class="field"><span>Tunnel name</span><input type="text" name="name" value="tunnel1"></label>
+    <label class="field"><span>Local address</span><input type="text" name="local_addr" placeholder="0.0.0.0"></label>
+    <label class="field"><span>Remote address</span><input type="text" name="remote_addr" placeholder="203.0.113.5"></label>
+    <label class="field"><span>Pre-shared key</span><input type="text" name="psk" placeholder="long random string"></label>
+    <label class="field"><span>Local traffic selector</span><input type="text" name="local_ts" value="0.0.0.0/0"></label>
+    <label class="field"><span>Remote traffic selector</span><input type="text" name="remote_ts" value="0.0.0.0/0"></label>
+  `;
+  nfw.modal.open({title: 'Add IPsec tunnel', body: html});
+  const bg = document.querySelector('.modal-bg');
+  const m = bg.querySelector('.modal');
+  const acts = document.createElement('div'); acts.className = 'actions';
+  const cancel = document.createElement('button'); cancel.textContent = 'Cancel'; cancel.onclick = () => bg.remove();
+  const save = document.createElement('button'); save.className = 'primary'; save.textContent = 'Save';
+  save.onclick = async () => {
+    try {
+      await nfw.api.post('/api/vpn/ipsec/tunnels', {tunnel: {
+        name: m.querySelector('[name=name]').value.trim(),
+        local_addr: m.querySelector('[name=local_addr]').value.trim() || '0.0.0.0',
+        remote_addr: m.querySelector('[name=remote_addr]').value.trim(),
+        psk: m.querySelector('[name=psk]').value.trim(),
+        local_ts: m.querySelector('[name=local_ts]').value.trim(),
+        remote_ts: m.querySelector('[name=remote_ts]').value.trim(),
+      }});
+      nfw.toast.ok('Tunnel created'); bg.remove(); loadIPSEC();
+    } catch (e) { nfw.toast.err(e.message); }
+  };
+  acts.appendChild(cancel); acts.appendChild(save); m.appendChild(acts);
+});
+document.getElementById('ipsec-refresh')?.addEventListener('click', loadIPSEC);
+document.getElementById('ipsec-apply')?.addEventListener('click', async () => {
+  try { await nfw.api.post('/api/vpn/ipsec/apply'); nfw.toast.ok('Applied'); loadIPSEC(); }
+  catch (e) { nfw.toast.err(e.message); }
+});
+
+/* initial */
+loadWG();
+</script>
+{% endblock %}

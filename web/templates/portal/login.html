@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ cfg.gateway_name }}</title>
+<style>
+  :root { --primary: {{ cfg.branding.primary_color or '#58a6ff' }}; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0d1117; color: #c9d1d9;
+    min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .card {
+    background: #161b22; border: 1px solid #30363d; border-radius: 12px;
+    padding: 32px 28px; max-width: 420px; width: 100%;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  }
+  .logo { text-align: center; margin-bottom: 20px; }
+  .logo img { max-height: 56px; }
+  h1 { margin: 0 0 8px; font-size: 20px; font-weight: 600; text-align: center; color: #f0f6fc; }
+  .welcome { text-align: center; color: #8b949e; font-size: 14px; margin: 0 0 20px; line-height: 1.5; }
+  .tabs { display: flex; margin-bottom: 20px; background: #0d1117; border-radius: 8px; padding: 4px; border: 1px solid #30363d; }
+  .tab { flex: 1; padding: 9px 12px; text-align: center; font-size: 13px; font-weight: 500; color: #8b949e; cursor: pointer; border-radius: 6px; user-select: none; transition: all 0.15s; }
+  .tab.active { background: var(--primary); color: #fff; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+  label { display: block; margin-bottom: 14px; }
+  label span { display: block; font-size: 12px; color: #8b949e; margin-bottom: 5px; letter-spacing: 0.02em; }
+  input[type=text], input[type=password] {
+    width: 100%; padding: 11px 13px;
+    background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
+    color: #c9d1d9; font-size: 15px; outline: none;
+    transition: border-color 0.15s;
+  }
+  input[type=text]:focus, input[type=password]:focus { border-color: var(--primary); }
+  input.voucher-input { letter-spacing: 0.15em; text-transform: uppercase; font-family: ui-monospace, monospace; font-weight: 600; font-size: 18px; text-align: center; }
+  .tos { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px; font-size: 12px; color: #8b949e; max-height: 200px; overflow-y: auto; margin-bottom: 12px; white-space: pre-wrap; }
+  .tos-check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; margin-bottom: 14px; color: #8b949e; }
+  .tos-check input { margin-top: 2px; }
+  button { width: 100%; padding: 12px; background: var(--primary); color: #fff; border: 0; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; transition: opacity 0.15s; }
+  button:hover { opacity: 0.9; }
+  button:active { opacity: 0.8; }
+  .error { background: rgba(248,81,73,0.1); border: 1px solid #f85149; color: #f85149; padding: 10px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; }
+  .info { background: rgba(88,166,255,0.08); border: 1px solid #58a6ff; color: #8b949e; padding: 10px 12px; border-radius: 8px; font-size: 12px; margin-bottom: 16px; line-height: 1.5; }
+  .splash-extra { color: #8b949e; font-size: 13px; line-height: 1.6; margin-bottom: 18px; text-align: center; }
+  .footer { text-align: center; color: #6e7681; font-size: 11px; margin-top: 24px; line-height: 1.5; }
+</style>
+</head>
+<body>
+  <div class="card">
+    {% if cfg.branding.logo_url %}
+    <div class="logo"><img src="{{ cfg.branding.logo_url }}" alt=""></div>
+    {% endif %}
+    <h1>{{ cfg.gateway_name }}</h1>
+    <p class="welcome">{{ cfg.branding.welcome_text or "Please sign in to continue." }}</p>
+
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+    {% if auth_mode == 'splash' %}
+      {# ---- Splash-only: TOS + Connect, no credentials ---- #}
+      {% if cfg.splash_extra_text %}
+        <div class="splash-extra">{{ cfg.splash_extra_text }}</div>
+      {% endif %}
+      {% if cfg.tos_text %}
+        <div class="tos">{{ cfg.tos_text }}</div>
+      {% endif %}
+      <form method="post" action="/splash">
+        <input type="hidden" name="next" value="{{ next }}">
+        {% if cfg.tos_required %}
+        <label class="tos-check">
+          <input type="checkbox" name="accept_tos" value="1" required>
+          <span>I have read and accept the terms of service</span>
+        </label>
+        {% endif %}
+        <button type="submit">{{ cfg.splash_label or 'Connect' }}</button>
+      </form>
+    {% else %}
+      {# ---- Credential / voucher / multi: tabs ---- #}
+      {% set show_pw = auth_mode in ('multi', 'credentials') %}
+      {% set show_v  = auth_mode in ('multi', 'voucher') %}
+
+      {% if show_pw and show_v %}
+      <div class="tabs">
+        <div class="tab {% if active_tab != 'voucher' %}active{% endif %}" data-tab="password">Username &amp; password</div>
+        <div class="tab {% if active_tab == 'voucher' %}active{% endif %}" data-tab="voucher">Voucher code</div>
+      </div>
+      {% endif %}
+
+      {% if show_pw %}
+      <div class="panel {% if not show_v or active_tab != 'voucher' %}active{% endif %}" id="panel-password">
+        <form method="post" action="/login">
+          <input type="hidden" name="next" value="{{ next }}">
+          <input type="hidden" name="auth_method" value="password">
+          <label><span>Username</span>
+            <input type="text" name="username" autocomplete="username" required {% if not show_v or active_tab != 'voucher' %}autofocus{% endif %}>
+          </label>
+          <label><span>Password</span>
+            <input type="password" name="password" autocomplete="current-password" required>
+          </label>
+          {% if cfg.tos_required %}
+          <div class="tos">{{ cfg.tos_text }}</div>
+          <label class="tos-check">
+            <input type="checkbox" name="accept_tos" value="1" required>
+            <span>I have read and accept the terms of service</span>
+          </label>
+          {% endif %}
+          <button type="submit">Sign in</button>
+        </form>
+      </div>
+      {% endif %}
+
+      {% if show_v %}
+      <div class="panel {% if active_tab == 'voucher' %}active{% endif %}" id="panel-voucher">
+        <div class="info">Enter the code printed on your voucher. Codes are case-insensitive.</div>
+        <form method="post" action="/login">
+          <input type="hidden" name="next" value="{{ next }}">
+          <input type="hidden" name="auth_method" value="voucher">
+          <label><span>Voucher code</span>
+            <input type="text" name="voucher_code" class="voucher-input"
+                   autocomplete="off" autocapitalize="characters"
+                   spellcheck="false" required placeholder="XXXXXXXX" maxlength="40">
+          </label>
+          {% if cfg.tos_required %}
+          <div class="tos">{{ cfg.tos_text }}</div>
+          <label class="tos-check">
+            <input type="checkbox" name="accept_tos" value="1" required>
+            <span>I have read and accept the terms of service</span>
+          </label>
+          {% endif %}
+          <button type="submit">Redeem voucher</button>
+        </form>
+      </div>
+      {% endif %}
+    {% endif %}
+
+    <div class="footer">
+      Powered by NFW &middot;
+      {% if auth_mode == 'splash' %}splash-only{% else %}{{ cfg.auth_backends|join(" / ") }}{% endif %}
+    </div>
+  </div>
+
+  <script>
+    document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+      document.getElementById('panel-' + t.getAttribute('data-tab')).classList.add('active');
+      const inp = document.querySelector('#panel-' + t.getAttribute('data-tab') + ' input:not([type=hidden])');
+      if (inp) inp.focus();
+    }));
+    const vi = document.querySelector('input.voucher-input');
+    if (vi) vi.addEventListener('input', e => { e.target.value = e.target.value.toUpperCase(); });
+  </script>
+</body>
+</html>

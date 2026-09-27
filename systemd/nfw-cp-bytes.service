@@ -1,0 +1,8 @@
+[Unit]
+Description=NFW captive portal byte accounting collector
+After=network.target
+ConditionPathExists=/usr/local/sbin/nfw-cp-bytes-collector.py
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nfw-cp-bytes-collector.py

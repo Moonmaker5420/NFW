@@ -1,0 +1,373 @@
+{% extends "base.html" %}
+{% block title %}Certificate Authority{% endblock %}
+{% block content %}
+<h1>Certificate Authority</h1>
+<p class="subtitle">Internal CA for issuing server and client certificates</p>
+
+<div class="row between" style="margin-bottom:12px">
+  <span id="ca-state" class="muted">Loading…</span>
+  <div class="row">
+    <button id="refresh-btn">Refresh</button>
+  </div>
+</div>
+
+<!-- ============= Setup (only shown when uninitialized) ============= -->
+<div class="card" id="setup-card" style="display:none">
+  <h2>Initialize CA</h2>
+  <p class="muted" style="font-size:12px">
+    Generates a self-signed root CA (RSA 4096, 10-year) and a subordinate
+    intermediate CA (RSA 4096, 5-year). Issued certificates are signed by
+    the intermediate.
+  </p>
+  <div class="grid cols-3">
+    <label class="field"><span>Root CA common name</span><input type="text" id="set-root-cn" value="NFW Root CA"></label>
+    <label class="field"><span>Intermediate CN</span><input type="text" id="set-int-cn" value="NFW Intermediate CA"></label>
+    <label class="field"><span>Organization</span><input type="text" id="set-org" value="NFW"></label>
+    <label class="field"><span>Organizational unit</span><input type="text" id="set-ou" value="Firewall"></label>
+    <label class="field"><span>Country (2 chars)</span><input type="text" id="set-country" value="US" maxlength="2"></label>
+    <label class="field"><span>CRL lifetime (days)</span><input type="number" id="set-crl-days" value="180"></label>
+  </div>
+  <div class="row mt-2">
+    <button id="init-btn" class="primary">Initialize CA</button>
+    <span class="muted" style="font-size:12px">This takes a few seconds.</span>
+  </div>
+</div>
+
+<!-- ============= Status (only shown when initialized) ============= -->
+<div class="card" id="status-card" style="display:none">
+  <h2>CA status</h2>
+  <div class="grid cols-2">
+    <div>
+      <div class="stat-label">Root</div>
+      <div class="mono" id="root-subject" style="font-size:12px">—</div>
+      <div class="stat-sub">expires <span id="root-expires">—</span></div>
+      <div class="stat-sub mono">sha256 <span id="root-sha">—</span>…</div>
+    </div>
+    <div>
+      <div class="stat-label">Intermediate</div>
+      <div class="mono" id="int-subject" style="font-size:12px">—</div>
+      <div class="stat-sub">expires <span id="int-expires">—</span></div>
+    </div>
+  </div>
+  <div class="row mt-2">
+    <a class="btn small" href="/api/ca/root.crt">Download root</a>
+    <a class="btn small" href="/api/ca/chain.crt">Download chain</a>
+    <button class="small" id="crl-btn">Regenerate CRL</button>
+    <button class="small danger" id="reset-ca">Reset CA…</button>
+  </div>
+</div>
+
+<!-- ============= Admin UI TLS ============= -->
+<div class="card" id="admin-ui-card" style="display:none">
+  <h2>HTTPS for the admin UI</h2>
+  <p class="muted" style="font-size:12px">
+    Serve the web GUI over HTTPS using a CA-issued certificate.
+    HTTP remains accessible if anything goes wrong — you can always
+    disable this via the CLI recovery command.
+  </p>
+  <div id="tls-state"><div class="muted">Loading…</div></div>
+  <div class="row mt-2" style="gap:8px">
+    <button id="tls-enable" class="primary">Enable HTTPS</button>
+    <button id="tls-renew">Reissue certificate</button>
+    <button id="tls-disable" class="danger">Disable HTTPS</button>
+  </div>
+  <p class="muted" style="font-size:11px;margin-top:8px">
+    <strong>Recovery:</strong> if the GUI becomes unreachable after enabling
+    HTTPS, run <code>rm /etc/systemd/system/nfw-api.service.d/10-tls.conf
+    &amp;&amp; systemctl daemon-reload &amp;&amp; systemctl restart nfw-api</code>
+    on the firewall to revert to HTTP on port 8080.
+  </p>
+</div>
+
+<!-- ============= Issue ============= -->
+<div class="card" id="issue-card" style="display:none">
+  <h2>Issue certificate</h2>
+  <div class="grid cols-3">
+    <label class="field"><span>Kind</span>
+      <select id="iss-kind">
+        <option value="server">Server</option>
+        <option value="client">Client</option>
+        <option value="wildcard">Wildcard (CN only)</option>
+      </select>
+    </label>
+    <label class="field"><span>Common name</span><input type="text" id="iss-cn" placeholder="web.example.com"></label>
+    <label class="field"><span>Lifetime (days)</span><input type="number" id="iss-days" value="825"></label>
+    <label class="field" style="grid-column: span 3"><span>SAN (comma-separated DNS names or IPs — blank uses CN)</span><input type="text" id="iss-san" placeholder="web.example.com,www.example.com,192.168.10.1"></label>
+    <label class="field"><span>Key size</span>
+      <select id="iss-bits"><option value="2048">2048</option><option value="3072">3072</option><option value="4096">4096</option></select>
+    </label>
+  </div>
+  <button id="issue-btn" class="primary mt-2">Issue</button>
+
+  <div id="issue-result" style="display:none;margin-top:12px">
+    <h3 style="margin-top:0">Certificate issued</h3>
+    <p class="muted" style="font-size:12px">Serial: <span class="mono" id="iss-serial"></span></p>
+    <label class="field"><span>Certificate (PEM)</span><textarea id="iss-cert" rows="8" style="width:100%"></textarea></label>
+    <label class="field"><span>Private key (PEM) — save this now</span><textarea id="iss-key" rows="8" style="width:100%"></textarea></label>
+    <label class="field"><span>CA chain (PEM)</span><textarea id="iss-chain" rows="6" style="width:100%"></textarea></label>
+    <div class="row">
+      <button class="small" data-copy="#iss-cert">Copy cert</button>
+      <button class="small" data-copy="#iss-key">Copy key</button>
+      <button class="small" data-copy="#iss-chain">Copy chain</button>
+      <button class="small" id="dl-p12">Download PKCS#12…</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============= Sign CSR ============= -->
+<div class="card" id="csr-card" style="display:none">
+  <h2>Sign a CSR</h2>
+  <label class="field"><span>CSR (PEM)</span>
+    <textarea id="csr-pem" rows="8" placeholder="-----BEGIN CERTIFICATE REQUEST-----"></textarea>
+  </label>
+  <div class="grid cols-3">
+    <label class="field"><span>Kind</span>
+      <select id="csr-kind">
+        <option value="server">Server</option>
+        <option value="client">Client</option>
+      </select>
+    </label>
+    <label class="field"><span>Lifetime (days)</span><input type="number" id="csr-days" value="825"></label>
+    <label class="field"><span>Extra SAN (optional)</span><input type="text" id="csr-san" placeholder="alt.example.com"></label>
+  </div>
+  <button id="csr-btn" class="primary mt-2">Sign</button>
+  <div id="csr-result" style="display:none;margin-top:12px">
+    <label class="field"><span>Signed certificate (PEM)</span><textarea id="csr-cert" rows="8" style="width:100%"></textarea></label>
+    <button class="small" data-copy="#csr-cert">Copy</button>
+  </div>
+</div>
+
+<!-- ============= Issued certs ============= -->
+<div class="card" id="certs-card" style="display:none">
+  <h2>Issued certificates</h2>
+  <div id="certs-tbl"><div class="muted">Loading…</div></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+async function loadStatus() {
+  try {
+    const s = await nfw.api.get('/api/ca/status');
+    const initialized = s.initialized;
+    document.getElementById('setup-card').style.display = initialized ? 'none' : '';
+    document.getElementById('status-card').style.display = initialized ? '' : 'none';
+    document.getElementById('issue-card').style.display = initialized ? '' : 'none';
+    document.getElementById('csr-card').style.display = initialized ? '' : 'none';
+    document.getElementById('certs-card').style.display = initialized ? '' : 'none';
+    document.getElementById('admin-ui-card').style.display = initialized ? '' : 'none';
+    document.getElementById('ca-state').innerHTML = initialized
+      ? `<span class="badge ok">initialized</span> ${s.issued} issued, ${s.revoked} revoked`
+      : '<span class="badge warn">not initialized</span>';
+    if (initialized) {
+      document.getElementById('root-subject').textContent = (s.root||{}).subject || '—';
+      document.getElementById('root-expires').textContent = (s.root||{}).not_after || '—';
+      document.getElementById('root-sha').textContent = (s.root||{}).sha256 || '—';
+      document.getElementById('int-subject').textContent  = (s.intermediate||{}).subject || '—';
+      document.getElementById('int-expires').textContent  = (s.intermediate||{}).not_after || '—';
+      loadCerts();
+      if (window._loadTlsStatus) window._loadTlsStatus();
+    }
+  } catch (e) { nfw.toast.err('status: ' + e.message); }
+}
+
+async function loadCerts() {
+  try {
+    const r = await nfw.api.get('/api/ca/certs');
+    const list = r.certs || [];
+    if (!list.length) {
+      document.getElementById('certs-tbl').innerHTML = '<div class="muted">No certificates issued yet</div>';
+      return;
+    }
+    const rows = list.map(c => {
+      const revoked = c.status === 'R';
+      const badge = revoked ? '<span class="badge err">revoked</span>'
+                            : '<span class="badge ok">valid</span>';
+      const serial = c.serial;
+      return `<tr>
+        <td class="mono">${esc(serial)}</td>
+        <td>${badge}</td>
+        <td class="mono" style="font-size:11px">${esc((c.subject||'').substring(0,60))}</td>
+        <td class="mono" style="font-size:11px">${esc(c.san||'')}</td>
+        <td class="mono" style="font-size:11px">${esc((c.not_after||'').slice(0,10))}</td>
+        <td style="width:180px">
+          <button class="small" data-view="${esc(serial)}">View</button>
+          <button class="small" data-p12="${esc(serial)}">PKCS#12</button>
+          ${revoked ? '' : `<button class="small danger" data-revoke="${esc(serial)}">Revoke</button>`}
+          <button class="small danger" data-del="${esc(serial)}">Del</button>
+        </td>
+      </tr>`;
+    }).join('');
+    document.getElementById('certs-tbl').innerHTML =
+      '<table class="data"><thead><tr><th>Serial</th><th>State</th><th>Subject</th><th>SAN</th><th>Expires</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+    bindCertActions();
+  } catch (e) { nfw.toast.err('certs: ' + e.message); }
+}
+
+function bindCertActions() {
+  document.querySelectorAll('[data-view]').forEach(b => b.onclick = async () => {
+    try {
+      const r = await nfw.api.get('/api/ca/certs/' + b.getAttribute('data-view'));
+      nfw.modal.open({title: 'Certificate details',
+        body: `<pre class="code" style="max-height:400px">${esc(r.certificate_pem||'')}</pre>`});
+    } catch (e) { nfw.toast.err(e.message); }
+  });
+  document.querySelectorAll('[data-revoke]').forEach(b => b.onclick = async () => {
+    const s = b.getAttribute('data-revoke');
+    if (!confirm('Revoke certificate ' + s + '?')) return;
+    try { await nfw.api.post('/api/ca/revoke', {serial: s}); nfw.toast.ok('Revoked'); loadCerts(); }
+    catch (e) { nfw.toast.err(e.message); }
+  });
+  document.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+    const s = b.getAttribute('data-del');
+    if (!confirm('Delete certificate ' + s + ' from the store?')) return;
+    try { await nfw.api.del('/api/ca/certs/' + s); nfw.toast.ok('Deleted'); loadCerts(); }
+    catch (e) { nfw.toast.err(e.message); }
+  });
+  document.querySelectorAll('[data-p12]').forEach(b => b.onclick = () => downloadP12(b.getAttribute('data-p12')));
+}
+
+async function downloadP12(serial) {
+  const pw = prompt('Password for the PKCS#12 file (min 8 chars):');
+  if (!pw || pw.length < 8) return;
+  try {
+    const r = await nfw.api.post('/api/ca/export/p12', {serial, password: pw});
+    const b = atob(r.data_b64);
+    const bytes = new Uint8Array(b.length);
+    for (let i = 0; i < b.length; i++) bytes[i] = b.charCodeAt(i);
+    const blob = new Blob([bytes], {type: 'application/x-pkcs12'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = r.filename || ('nfw-' + serial + '.p12');
+    a.click();
+    nfw.toast.ok('Downloaded');
+  } catch (e) { nfw.toast.err(e.message); }
+}
+
+// ---------- Init ----------
+document.getElementById('init-btn').onclick = async () => {
+  if (!confirm('Initialize the CA? This generates a root and intermediate keypair.')) return;
+  const cfg = {
+    root_cn: document.getElementById('set-root-cn').value.trim(),
+    intermediate_cn: document.getElementById('set-int-cn').value.trim(),
+    org: document.getElementById('set-org').value.trim(),
+    ou: document.getElementById('set-ou').value.trim(),
+    country: document.getElementById('set-country').value.trim().toUpperCase(),
+    crl_lifetime_days: parseInt(document.getElementById('set-crl-days').value) || 180,
+  };
+  try {
+    await nfw.api.put('/api/ca/config', {config: cfg});
+    await nfw.api.post('/api/config/commit', {message: 'CA config'}).catch(()=>{});
+    await nfw.api.post('/api/ca/init', {});
+    nfw.toast.ok('CA initialized');
+    loadStatus();
+  } catch (e) { nfw.toast.err(e.message); }
+};
+
+// ---------- Issue ----------
+document.getElementById('issue-btn').onclick = async () => {
+  const body = {
+    kind: document.getElementById('iss-kind').value,
+    common_name: document.getElementById('iss-cn').value.trim(),
+    san: document.getElementById('iss-san').value.trim(),
+    lifetime_days: parseInt(document.getElementById('iss-days').value) || 825,
+    key_bits: parseInt(document.getElementById('iss-bits').value) || 2048,
+  };
+  try {
+    const r = await nfw.api.post('/api/ca/issue', body);
+    document.getElementById('issue-result').style.display = '';
+    document.getElementById('iss-serial').textContent = r.serial;
+    document.getElementById('iss-cert').value = r.certificate_pem || '';
+    document.getElementById('iss-key').value  = r.private_key_pem || '';
+    document.getElementById('iss-chain').value = r.ca_chain_pem || '';
+    document.getElementById('dl-p12').dataset.serial = r.serial;
+    nfw.toast.ok('Issued serial ' + r.serial);
+    loadCerts();
+  } catch (e) { nfw.toast.err(e.message); }
+};
+
+document.getElementById('dl-p12').onclick = (e) => downloadP12(e.target.dataset.serial);
+
+// ---------- Sign CSR ----------
+document.getElementById('csr-btn').onclick = async () => {
+  try {
+    const r = await nfw.api.post('/api/ca/sign-csr', {
+      csr_pem: document.getElementById('csr-pem').value,
+      kind: document.getElementById('csr-kind').value,
+      lifetime_days: parseInt(document.getElementById('csr-days').value) || 825,
+      san: document.getElementById('csr-san').value.trim(),
+    });
+    document.getElementById('csr-result').style.display = '';
+    document.getElementById('csr-cert').value = r.certificate_pem || '';
+    nfw.toast.ok('Signed serial ' + r.serial);
+    loadCerts();
+  } catch (e) { nfw.toast.err(e.message); }
+};
+
+// ---------- Reset ----------
+document.getElementById('reset-ca').onclick = async () => {
+  if (!confirm('RESET the CA? This destroys all issued certs and keys. Type OK to confirm.')) return;
+  if (prompt('Type "RESET" to confirm:') !== 'RESET') return;
+  try { await nfw.api.post('/api/ca/init', {force: true}); nfw.toast.ok('CA reset'); loadStatus(); }
+  catch (e) { nfw.toast.err(e.message); }
+};
+
+document.getElementById('crl-btn').onclick = async () => {
+  try { const r = await nfw.api.post('/api/ca/crl/regenerate'); nfw.toast.ok('CRL updated'); }
+  catch (e) { nfw.toast.err(e.message); }
+};
+
+document.getElementById('refresh-btn').onclick = loadStatus;
+
+async function loadTlsStatus() {
+  try {
+    const s = await nfw.api.get('/api/ca/tls/status');
+    document.getElementById('tls-state').innerHTML = s.enabled
+      ? `<span class="badge ok">HTTPS enabled</span> on port <span class="mono">${s.listen_port}</span> — cert <span class="mono">${esc(s.cert_serial)}</span>`
+      : '<span class="badge warn">HTTP only</span> (port 8080)';
+  } catch (e) {
+    document.getElementById('tls-state').innerHTML = esc('error: ' + e.message);
+  }
+}
+
+document.getElementById('tls-enable').onclick = async () => {
+  if (!confirm('Enable HTTPS on the admin UI? A cert will be issued and nfw-api will restart.')) return;
+  try {
+    const r = await nfw.api.post('/api/ca/tls/enable');
+    nfw.toast.ok('HTTPS enabled — ' + (r.url || ''));
+    loadTlsStatus();
+  } catch (e) { nfw.toast.err(e.message); }
+};
+
+document.getElementById('tls-renew').onclick = async () => {
+  try {
+    const s = await nfw.api.get('/api/ca/tls/status');
+    if (!s.cert_serial) { nfw.toast.err('No cert in use'); return; }
+    await nfw.api.post('/api/ca/renew', {serial: s.cert_serial});
+    nfw.toast.ok('Reissued');
+    loadStatus();
+  } catch (e) { nfw.toast.err(e.message); }
+};
+
+document.getElementById('tls-disable').onclick = async () => {
+  if (!confirm('Disable HTTPS? The admin UI will revert to HTTP on port 8080.')) return;
+  try {
+    await nfw.api.post('/api/ca/tls/disable');
+    nfw.toast.ok('Reverted to HTTP');
+    loadTlsStatus();
+  } catch (e) { nfw.toast.err(e.message); }
+};
+
+window._loadTlsStatus = loadTlsStatus;
+
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('[data-copy]');
+  if (!t) return;
+  const el = document.querySelector(t.getAttribute('data-copy'));
+  if (el) { el.select(); document.execCommand('copy'); nfw.toast.ok('Copied'); }
+});
+
+document.addEventListener('DOMContentLoaded', loadStatus);
+</script>
+{% endblock %}

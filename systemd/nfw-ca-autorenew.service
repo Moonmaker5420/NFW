@@ -1,0 +1,8 @@
+[Unit]
+Description=Renew expiring CA-issued certificates
+After=nfw-configd.service
+Requires=nfw-configd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nfw-ca-autorenew.sh

@@ -1,0 +1,13 @@
+[Unit]
+Description=Add multicast route for SSDP on the LAN interface
+After=network-online.target
+Wants=network-online.target
+Before=nfw-configd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/nfw-ssdp-route.sh
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run NFW captive portal byte accounting every 30 seconds
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=30s
+AccuracySec=5s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

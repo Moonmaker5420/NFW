@@ -1,0 +1,311 @@
+"""Service configd actions: DHCP, DNS, NTP."""
+from __future__ import annotations
+import logging
+import os
+import subprocess
+import sys
+from typing import Any
+
+from configd.registry import action
+
+sys.path.insert(0, "/opt/nfw")
+sys.path.insert(0, "/opt/nfw/core")
+
+from config import store as cfg_store  # noqa: E402
+from config.schema import validate  # noqa: E402
+from modules.services.dhcp import compile_dhcpd, dhcp_service_unit_interface  # noqa: E402
+from modules.services.dns import compile_unbound  # noqa: E402
+from modules.services.ntp import compile_chrony  # noqa: E402
+from modules.network.interfaces import resolve_roles  # noqa: E402
+
+LOG = logging.getLogger("configd.services")
+
+
+def _effective_config() -> dict:
+    staged = cfg_store.get_staging()
+    cfg = staged if staged is not None else cfg_store.read()
+    cfg = dict(cfg)
+    try:
+        cfg["_resolved_interfaces"] = resolve_roles(cfg.get("network", {}))
+    except Exception as e:
+        LOG.warning("interface resolve failed: %s", e)
+    return cfg
+
+
+def _atomic_write(path: str, content: str, mode: int = 0o644):
+    d = os.path.dirname(path)
+    os.makedirs(d, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(content)
+        f.flush()
+        os.fsync(f.fileno())
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+def _direct_write(path: str, content: str):
+    with open(path, "w") as f:
+        f.write(content)
+
+
+def _run(cmd: list[str], timeout: int = 15) -> dict:
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True,
+                           timeout=timeout, check=False)
+        return {"rc": p.returncode, "stdout": p.stdout, "stderr": p.stderr}
+    except subprocess.TimeoutExpired:
+        return {"rc": 124, "stdout": "", "stderr": "timeout"}
+    except FileNotFoundError as e:
+        return {"rc": 127, "stdout": "", "stderr": str(e)}
+
+
+# ===========================================================================
+# DHCP
+# ===========================================================================
+@action("dhcp.config.get")
+def dhcp_get(_data):
+    cfg = _effective_config()
+    return {"config": cfg["services"].get("dhcp_config", {})}
+
+
+@action("dhcp.config.set")
+def dhcp_set(data):
+    """Merge incoming config with existing (preserve subnets if absent)."""
+    new = data.get("config")
+    if not isinstance(new, dict):
+        raise ValueError("missing config")
+
+    cfg = _effective_config()
+    existing = cfg.get("services", {}).get("dhcp_config", {}) or {}
+
+    # Merge: start from existing, overlay new fields only if present
+    merged = dict(existing)
+    for k, v in new.items():
+        # Never let a UI page wipe the subnets list unless it explicitly
+        # sends a non-empty one. Empty list often means "not loaded".
+        if k == "subnets" and isinstance(v, list) and len(v) == 0:
+            # Only allow explicit empty if the existing is also empty
+            if existing.get("subnets"):
+                continue
+        if k == "static_reservations" and isinstance(v, list) and len(v) == 0:
+            if existing.get("static_reservations"):
+                continue
+        merged[k] = v
+
+    cfg.setdefault("services", {})["dhcp_config"] = merged
+    cfg["services"]["dhcp"] = bool(merged.get("enabled"))
+    validate(cfg)
+    cfg_store.stage(cfg, author=data.get("author") or "unknown")
+    return {"staged": True, "config": merged}
+
+
+@action("dhcp.preview")
+def dhcp_preview(_data):
+    cfg = _effective_config()
+    text = compile_dhcpd(cfg)
+    iface = dhcp_service_unit_interface(cfg)
+    return {"config": text, "interface": iface}
+
+
+@action("dhcp.apply")
+def dhcp_apply(data):
+    cfg = _effective_config()
+    text = compile_dhcpd(cfg)
+    iface = dhcp_service_unit_interface(cfg)
+
+    _atomic_write("/etc/dhcp/dhcpd.conf", text)
+
+    default_content = 'INTERFACESv4="' + iface + '"\nINTERFACESv6=""\n'
+    try:
+        _direct_write("/etc/default/isc-dhcp-server", default_content)
+    except (PermissionError, OSError) as e:
+        LOG.warning("direct write of /etc/default/isc-dhcp-server failed: %s", e)
+        p = subprocess.run(
+            ["/usr/bin/tee", "/etc/default/isc-dhcp-server"],
+            input=default_content,
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+        if p.returncode != 0:
+            raise RuntimeError(
+                "cannot write /etc/default/isc-dhcp-server: " + p.stderr)
+
+    enabled = cfg["services"].get("dhcp_config", {}).get("enabled", False)
+    if enabled:
+        _run(["systemctl", "enable", "isc-dhcp-server"])
+        r = _run(["systemctl", "restart", "isc-dhcp-server"])
+    else:
+        _run(["systemctl", "stop", "isc-dhcp-server"])
+        r = {"rc": 0}
+
+    return {"applied": True, "interface": iface, "service": r}
+
+
+@action("dhcp.leases")
+def dhcp_leases(_data):
+    path = "/var/lib/dhcp/dhcpd.leases"
+    leases: list[dict] = []
+    if not os.path.exists(path):
+        return {"leases": []}
+    cur: dict = {}
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("lease "):
+                cur = {"ip": line.split()[1], "state": "active"}
+            elif line.startswith("ends "):
+                cur["ends"] = line[5:].rstrip(";")
+            elif line.startswith("starts "):
+                cur["starts"] = line[7:].rstrip(";")
+            elif line.startswith("hardware ethernet"):
+                cur["mac"] = line.split()[2].rstrip(";")
+            elif line.startswith("client-hostname"):
+                cur["hostname"] = line.split()[1].strip('";')
+            elif line == "}" and cur:
+                leases.append(cur)
+                cur = {}
+    return {"leases": leases}
+
+
+# ===========================================================================
+# DNS (Unbound)
+# ===========================================================================
+@action("dns.config.get")
+def dns_get(_data):
+    cfg = _effective_config()
+    return {"config": cfg["services"].get("dns_config", {})}
+
+
+@action("dns.config.set")
+def dns_set(data):
+    """Merge incoming config with existing (preserve critical fields)."""
+    new = data.get("config")
+    if not isinstance(new, dict):
+        raise ValueError("missing config")
+
+    cfg = _effective_config()
+    existing = cfg.get("services", {}).get("dns_config", {}) or {}
+
+    # Fields that must never be wiped by an incomplete UI POST
+    PRESERVE_IF_EMPTY = ("forwarders_tls", "access_control",
+                        "forward_zones", "host_overrides")
+
+    merged = dict(existing)
+    for k, v in new.items():
+        if k in PRESERVE_IF_EMPTY and isinstance(v, list) and len(v) == 0:
+            if existing.get(k):
+                continue
+        merged[k] = v
+
+    # Ensure listen defaults to 0.0.0.0 if unset
+    if not merged.get("listen"):
+        merged["listen"] = ["0.0.0.0"]
+
+    cfg.setdefault("services", {})["dns_config"] = merged
+    cfg["services"]["dns"] = bool(merged.get("enabled"))
+    validate(cfg)
+    cfg_store.stage(cfg, author=data.get("author") or "unknown")
+    return {"staged": True, "config": merged}
+
+
+@action("dns.preview")
+def dns_preview(_data):
+    cfg = _effective_config()
+    text = compile_unbound(cfg)
+    return {"config": text}
+
+
+@action("dns.apply")
+def dns_apply(data):
+    cfg = _effective_config()
+    text = compile_unbound(cfg)
+    path = "/etc/unbound/unbound.conf.d/nfw.conf"
+    _atomic_write(path, text)
+
+    v = _run(["unbound-checkconf", path])
+    if v["rc"] != 0:
+        raise RuntimeError("unbound-checkconf: " + v["stderr"])
+
+    enabled = cfg["services"].get("dns_config", {}).get("enabled", False)
+    if enabled:
+        _run(["systemctl", "enable", "unbound"])
+        r = _run(["systemctl", "restart", "unbound"])
+    else:
+        _run(["systemctl", "stop", "unbound"])
+        r = {"rc": 0}
+    return {"applied": True, "check": v, "service": r}
+
+
+@action("dns.querylog")
+def dns_querylog(data):
+    lines = int(data.get("lines", 100))
+    lines = max(1, min(lines, 2000))
+    path = "/var/log/unbound/unbound.log"
+    if not os.path.exists(path):
+        return {"lines": [], "file": path}
+    with open(path, "rb") as f:
+        f.seek(0, os.SEEK_END)
+        size = f.tell()
+        block = min(size, 128 * 1024)
+        f.seek(size - block)
+        data = f.read()
+    out = data.decode("utf-8", errors="replace").splitlines()[-lines:]
+    return {"lines": out, "file": path}
+
+
+# ===========================================================================
+# NTP (chrony)
+# ===========================================================================
+@action("ntp.config.get")
+def ntp_get(_data):
+    cfg = _effective_config()
+    return {"config": cfg["services"].get("ntp_config", {})}
+
+
+@action("ntp.config.set")
+def ntp_set(data):
+    """Merge incoming config with existing."""
+    new = data.get("config")
+    if not isinstance(new, dict):
+        raise ValueError("missing config")
+    cfg = _effective_config()
+    existing = cfg.get("services", {}).get("ntp_config", {}) or {}
+    merged = dict(existing)
+    for k, v in new.items():
+        if k == "servers" and isinstance(v, list) and len(v) == 0:
+            if existing.get("servers"):
+                continue
+        merged[k] = v
+    cfg.setdefault("services", {})["ntp_config"] = merged
+    cfg["services"]["ntp"] = bool(merged.get("enabled"))
+    validate(cfg)
+    cfg_store.stage(cfg, author=data.get("author") or "unknown")
+    return {"staged": True, "config": merged}
+
+
+@action("ntp.preview")
+def ntp_preview(_data):
+    cfg = _effective_config()
+    return {"config": compile_chrony(cfg)}
+
+
+@action("ntp.apply")
+def ntp_apply(data):
+    cfg = _effective_config()
+    text = compile_chrony(cfg)
+    _atomic_write("/etc/chrony/chrony.conf", text)
+    enabled = cfg["services"].get("ntp_config", {}).get("enabled", True)
+    if enabled:
+        _run(["systemctl", "enable", "chrony"])
+        r = _run(["systemctl", "restart", "chrony"])
+    else:
+        _run(["systemctl", "stop", "chrony"])
+        r = {"rc": 0}
+    return {"applied": True, "service": r}
+
+
+@action("ntp.status")
+def ntp_status(_data):
+    r = _run(["chronyc", "tracking"])
+    src = _run(["chronyc", "sources", "-v"])
+    return {"tracking": r["stdout"], "sources": src["stdout"]}

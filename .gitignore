@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtualenv (rebuilt by installer)
+venv/
+
+# Runtime state (never commit)
+*.log
+*.bak
+*.bak.*
+.backup*
+
+# Legacy dirs not part of the install payload
+installer/
+etc/
+nfw/
+
+# Backups and artifacts
+backups/
+*.tar.gz
+*.raw
+*.raw.zst
+
+# Editor noise
+.vscode/
+.idea/
+*.swp
+
+# Backup files with timestamps or phase markers
+*.bak*
+*.phase*
+*.before*

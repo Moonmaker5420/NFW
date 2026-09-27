@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block title %}UPnP / NAT-PMP{% endblock %}
+{% block content %}
+<h1>UPnP IGD &amp; NAT-PMP</h1>
+<p class="subtitle">Automatic port mapping for LAN clients (miniupnpd).</p>
+
+{% include "nat/_tabs.html" %}
+
+<div class="row between" style="margin-bottom:12px">
+  <label class="row" style="gap:6px"><input type="checkbox" id="enabled"> Enabled</label>
+  <div class="row">
+    <button id="apply-btn" class="primary">Save &amp; Apply</button>
+    <button id="refresh-btn">Refresh</button>
+  </div>
+</div>
+
+<div class="grid cols-2">
+  <div class="card" id="settings-card">
+    <h2>Settings</h2>
+    <label class="field"><span>External interface (role)</span><input type="text" id="ext" value="wan"></label>
+    <label class="field"><span>Internal interface (role)</span><input type="text" id="int" value="lan"></label>
+    <label class="field"><span>HTTP port (IGD)</span><input type="number" id="port" value="5000"></label>
+    <label class="field"><span>External IP (WAN, auto-detected — click Detect to refresh)</span>
+      <div class="row" style="gap:6px">
+        <input type="text" id="extip" placeholder="auto-detect on enable" style="flex:1">
+        <button type="button" id="detect-ip-btn" class="small">Detect now</button>
+      </div>
+    </label>
+    <label class="field"><span>Presentation URL</span><input type="text" id="pres" placeholder="http://192.168.10.1:8080/"></label>
+    <label class="row" style="gap:6px"><input type="checkbox" id="secure"> Secure mode (deny mappings to the firewall itself)</label>
+  </div>
+  <div class="card">
+    <h2>Service</h2>
+    <div class="stat-label">State</div>
+    <div class="stat-value small" id="svc">—</div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Active mappings</h2>
+  <div id="leases"><div class="muted">No mappings</div></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+// Grey out the Settings card when UPnP is off.
+function toggleSettingsDisabled(disabled) {
+  ['ext','int','port','extip','pres','secure','detect-ip-btn'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = disabled;
+  });
+  const card = document.getElementById('settings-card');
+  if (card) card.style.opacity = disabled ? '0.55' : '1';
+}
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+async function load() {
+  try {
+    const r = await nfw.api.get('/api/firewall/nat/upnp');
+    const u = r.upnp || {};
+    document.getElementById('enabled').checked = !!u.enabled;
+    document.getElementById('ext').value = u.external_iface || 'wan';
+    document.getElementById('int').value = u.internal_iface || 'lan';
+    document.getElementById('port').value = u.http_port || 5000;
+    document.getElementById('extip').value = u.external_ip || '';
+    document.getElementById('pres').value = u.presentation_url || '';
+    document.getElementById('secure').checked = u.secure_mode !== false;
+    document.getElementById('svc').textContent = (r.service || '—').toUpperCase();
+    toggleSettingsDisabled(!u.enabled);
+    const leases = r.leases || [];
+    if (leases.length === 0) {
+      document.getElementById('leases').innerHTML = '<div class="muted">No mappings</div>';
+    } else {
+      const rows = leases.map(l => `
+        <tr>
+          <td class="mono">${esc(l.proto)}</td>
+          <td class="mono">${esc(l.ext_port)}</td>
+          <td class="mono">→ ${esc(l.int_ip)}:${esc(l.int_port)}</td>
+          <td>${esc(l.desc)}</td>
+        </tr>`).join('');
+      document.getElementById('leases').innerHTML =
+        '<table class="data"><thead><tr><th>Proto</th><th>Ext port</th><th>Internal</th><th>Description</th></tr></thead><tbody>' + rows + '</tbody></table>';
+    }
+  } catch (e) { nfw.toast.err(e.message); }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  load();
+  document.getElementById('refresh-btn').addEventListener('click', load);
+document.getElementById('enabled').addEventListener('change', (e) => {
+  toggleSettingsDisabled(!e.target.checked);
+});
+
+document.getElementById('detect-ip-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('detect-ip-btn');
+  btn.disabled = true;
+  const original = btn.textContent;
+  btn.textContent = 'Detecting…';
+  try {
+    const r = await nfw.api.post('/api/firewall/nat/upnp/detect-ip');
+    document.getElementById('extip').value = r.ip;
+    if (r.changed) nfw.toast.ok('Detected ' + r.ip + ' (was ' + (r.previous || 'empty') + ')');
+    else nfw.toast.info('Detected ' + r.ip + ' (unchanged)');
+  } catch (e) {
+    nfw.toast.err(e.message || 'Detection failed');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+});
+
+document.getElementById('apply-btn').addEventListener('click', async () => {
+    try {
+      const r = await nfw.api.put('/api/firewall/nat/upnp', {
+        upnp: {
+          enabled: document.getElementById('enabled').checked,
+          external_iface: document.getElementById('ext').value.trim(),
+          internal_iface: document.getElementById('int').value.trim(),
+          http_port: parseInt(document.getElementById('port').value) || 5000,
+          external_ip: document.getElementById('extip').value.trim(),
+          presentation_url: document.getElementById('pres').value.trim(),
+          secure_mode: document.getElementById('secure').checked,
+        },
+      });
+      // Always apply. The backend stops miniupnpd when enabled=false,
+      // so the off path must call /sync too. Previously we only called
+      // it when enabling, which left the service running after uncheck.
+      const want_enabled = document.getElementById('enabled').checked;
+      const s = await nfw.api.post('/api/firewall/nat/upnp/sync');
+
+      if (want_enabled) {
+        if (s && s.enabled === false) nfw.toast.warn('UPnP saved but the service did not start — check logs');
+        else nfw.toast.ok('UPnP enabled');
+      } else {
+        nfw.toast.ok('UPnP disabled');
+      }
+      load();
+    } catch (e) { nfw.toast.err(e.message); }
+  });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,8 @@
+[Unit]
+Description=NFW GeoIP database update (DB-IP Lite Country)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nfw-geoip-update.py

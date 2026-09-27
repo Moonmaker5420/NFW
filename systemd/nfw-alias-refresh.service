@@ -1,0 +1,9 @@
+[Unit]
+Description=NFW alias cache refresh (URL / GeoIP)
+After=network-online.target nfw-configd.service
+Wants=network-online.target
+Requires=nfw-configd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nfw-alias-refresh.py

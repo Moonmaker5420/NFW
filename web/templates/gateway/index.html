@@ -1,0 +1,298 @@
+{% extends "base.html" %}
+{% block title %}Gateways{% endblock %}
+{% block content %}
+<h1>Gateways &amp; Multi-WAN</h1>
+<p class="subtitle">Named gateways, failover/load-balance groups, and static routes.</p>
+
+<div class="grid cols-2">
+  <div class="card">
+    <h2>Gateways <button id="add-gw" class="small primary">+ Add</button></h2>
+    <div id="gw-tbl"><div class="muted">Loading…</div></div>
+  </div>
+  <div class="card">
+    <h2>Gateway Groups <button id="add-gwg" class="small primary">+ Add</button></h2>
+    <div id="gwg-tbl"><div class="muted">Loading…</div></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Static Routes <button id="add-route" class="small primary">+ Add</button></h2>
+  <div id="route-tbl"><div class="muted">Loading…</div></div>
+</div>
+
+<div class="card">
+  <div class="row between">
+    <div class="row"><span class="muted">Live health updates every 5 seconds.</span></div>
+    <div class="row">
+      <button id="apply-routes">Apply Routes</button>
+      <button id="refresh" class="primary">Refresh</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let GW = [], GWG = [];
+
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+async function load() {
+  try {
+    const r = await nfw.api.get('/api/gateways');
+    GW = r.gateways || [];
+    GWG = r.groups || [];
+    renderGW();
+    renderGWG();
+    loadRoutes();
+  } catch (e) { nfw.toast.err(e.message); }
+}
+
+function renderGW() {
+  if (GW.length === 0) {
+    document.getElementById('gw-tbl').innerHTML = '<div class="muted">No gateways</div>';
+    return;
+  }
+  const rows = GW.map(g => {
+    const st = g.status || {};
+    const state = st.state || 'unknown';
+    const badge = state === 'up' ? 'ok' : state === 'down' ? 'err' : 'warn';
+    const rtt = st.rtt_ms != null ? st.rtt_ms + ' ms' : '—';
+    return `
+      <tr>
+        <td class="mono">${esc(g.name)}</td>
+        <td class="mono">${esc(g.interface)}</td>
+        <td class="mono">${esc(g.address)}</td>
+        <td><span class="badge ${badge}">${esc(state)}</span></td>
+        <td class="mono">${rtt}</td>
+        <td class="num">${g.weight}</td>
+        <td style="width:120px">
+          <button class="small" data-edit-gw="${esc(g.id)}">Edit</button>
+          <button class="small danger" data-del-gw="${esc(g.id)}">Del</button>
+        </td>
+      </tr>`;
+  }).join('');
+  document.getElementById('gw-tbl').innerHTML =
+    '<table class="data"><thead><tr><th>Name</th><th>Iface</th><th>Address</th><th>State</th><th>RTT</th><th>W</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+  bindGW();
+}
+
+function bindGW() {
+  document.querySelectorAll('[data-edit-gw]').forEach(b => b.addEventListener('click', () => editGW(b.getAttribute('data-edit-gw'))));
+  document.querySelectorAll('[data-del-gw]').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm('Delete gateway?')) return;
+    try { await nfw.api.del('/api/gateways/' + b.getAttribute('data-del-gw')); load(); }
+    catch (e) { nfw.toast.err(e.message); }
+  }));
+}
+
+function renderGWG() {
+  if (GWG.length === 0) {
+    document.getElementById('gwg-tbl').innerHTML = '<div class="muted">No groups</div>';
+    return;
+  }
+  const rows = GWG.map(g => {
+    const members = (g.members || []).map(m => {
+      const gw = GW.find(x => x.id === m.gateway_id);
+      return gw ? gw.name : m.gateway_id;
+    }).join(', ');
+    return `
+      <tr>
+        <td class="mono">${esc(g.name)}</td>
+        <td><span class="badge info">${esc(g.type)}</span></td>
+        <td>${esc(members)}</td>
+        <td style="width:120px">
+          <button class="small" data-edit-gwg="${esc(g.id)}">Edit</button>
+          <button class="small danger" data-del-gwg="${esc(g.id)}">Del</button>
+        </td>
+      </tr>`;
+  }).join('');
+  document.getElementById('gwg-tbl').innerHTML =
+    '<table class="data"><thead><tr><th>Name</th><th>Type</th><th>Members</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+  document.querySelectorAll('[data-edit-gwg]').forEach(b => b.addEventListener('click', () => editGWG(b.getAttribute('data-edit-gwg'))));
+  document.querySelectorAll('[data-del-gwg]').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm('Delete group?')) return;
+    try { await nfw.api.del('/api/gateways/groups/' + b.getAttribute('data-del-gwg')); load(); }
+    catch (e) { nfw.toast.err(e.message); }
+  }));
+}
+
+async function loadRoutes() {
+  try {
+    const r = await nfw.api.get('/api/config/effective');
+    const routes = (r.config?.network?.gateways?.static_routes) || [];
+    renderRoutes(routes);
+  } catch (e) { /* silent */ }
+}
+
+function renderRoutes(routes) {
+  if (routes.length === 0) {
+    document.getElementById('route-tbl').innerHTML = '<div class="muted">No static routes</div>';
+    return;
+  }
+  const rows = routes.map(r => {
+    const gw = (r.gateway || '').startsWith('gw-')
+      ? (GW.find(x => x.id === r.gateway)?.name || r.gateway)
+      : (r.gateway || '');
+    return `
+      <tr>
+        <td class="mono">${esc(r.destination)}</td>
+        <td class="mono">${esc(gw)}</td>
+        <td>${esc(r.description || '')}</td>
+        <td><span class="badge ${r.enabled !== false ? 'ok' : 'warn'}">${r.enabled !== false ? 'on' : 'off'}</span></td>
+        <td><button class="small danger" data-del-route="${esc(r.id)}">Del</button></td>
+      </tr>`;
+  }).join('');
+  document.getElementById('route-tbl').innerHTML =
+    '<table class="data"><thead><tr><th>Destination</th><th>Gateway</th><th>Description</th><th>State</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+  document.querySelectorAll('[data-del-route]').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm('Delete route?')) return;
+    try { await nfw.api.del('/api/gateways/routes/' + b.getAttribute('data-del-route')); load(); }
+    catch (e) { nfw.toast.err(e.message); }
+  }));
+}
+
+function editGW(id) {
+  const g = id ? GW.find(x => x.id === id) : {name:'', interface:'wan', address:'', monitor_ips:[], weight:1, enabled:true, description:''};
+  const html = `
+    <label class="field"><span>Name (letters, digits, underscore)</span><input type="text" name="name" value="${esc(g.name)}"></label>
+    <label class="field"><span>Interface role (wan / opt1 / ...)</span><input type="text" name="interface" value="${esc(g.interface)}"></label>
+    <label class="field"><span>Gateway address (next-hop IP)</span><input type="text" name="address" value="${esc(g.address)}"></label>
+    <label class="field"><span>Monitor IPs (comma-separated)</span><input type="text" name="monitor_ips" value="${esc((g.monitor_ips||[]).join(','))}"></label>
+    <label class="field"><span>Weight (1-5, for load balancing)</span><input type="number" name="weight" min="1" max="5" value="${g.weight||1}"></label>
+    <label class="field"><span>Description</span><input type="text" name="description" value="${esc(g.description||'')}"></label>
+    <label class="row" style="gap:6px;margin-top:8px"><input type="checkbox" name="enabled" ${g.enabled !== false ? 'checked' : ''}> Enabled</label>
+  `;
+  nfw.modal.open({title: id ? 'Edit gateway' : 'New gateway', body: html});
+  const bg = document.querySelector('.modal-bg');
+  const m = bg.querySelector('.modal');
+  const acts = document.createElement('div'); acts.className = 'actions';
+  const cancel = document.createElement('button'); cancel.textContent = 'Cancel';
+  cancel.onclick = () => bg.remove();
+  const save = document.createElement('button'); save.className = 'primary'; save.textContent = 'Save';
+  save.onclick = async () => {
+    const body = {
+      gateway: {
+        name: m.querySelector('[name=name]').value.trim(),
+        interface: m.querySelector('[name=interface]').value.trim(),
+        address: m.querySelector('[name=address]').value.trim(),
+        monitor_ips: m.querySelector('[name=monitor_ips]').value.split(',').map(s=>s.trim()).filter(Boolean),
+        weight: parseInt(m.querySelector('[name=weight]').value)||1,
+        description: m.querySelector('[name=description]').value.trim(),
+        enabled: m.querySelector('[name=enabled]').checked,
+      },
+    };
+    try {
+      if (id) await nfw.api.put('/api/gateways/' + id, body);
+      else    await nfw.api.post('/api/gateways', body);
+      nfw.toast.ok('Saved');
+      bg.remove(); load();
+    } catch (e) { nfw.toast.err(e.message); }
+  };
+  acts.appendChild(cancel); acts.appendChild(save); m.appendChild(acts);
+}
+
+function editGWG(id) {
+  const g = id ? GWG.find(x => x.id === id) : {name:'', type:'failover', members:[]};
+  const memberOpts = GW.map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('');
+  const membersHtml = (g.members || []).map(m => `
+    <div class="row" style="gap:6px;margin-bottom:6px">
+      <select class="member-gw" style="flex:1">${memberOpts.replace(`value="${m.gateway_id}"`, `value="${m.gateway_id}" selected`)}</select>
+      <input type="number" class="member-tier" value="${m.tier||1}" style="width:80px" min="1" max="5" title="Tier / weight">
+      <button type="button" class="small danger remove-member">×</button>
+    </div>`).join('');
+  const html = `
+    <label class="field"><span>Name</span><input type="text" name="name" value="${esc(g.name)}"></label>
+    <label class="field"><span>Type</span>
+      <select name="type">
+        <option value="failover" ${g.type==='failover'?'selected':''}>Failover (priority)</option>
+        <option value="loadbalance" ${g.type==='loadbalance'?'selected':''}>Load balance (weighted)</option>
+      </select>
+    </label>
+    <label class="field"><span>Members</span></label>
+    <div id="members">${membersHtml}</div>
+    <button type="button" class="small" id="add-member">+ Add member</button>
+  `;
+  nfw.modal.open({title: id ? 'Edit group' : 'New group', body: html});
+  const bg = document.querySelector('.modal-bg');
+  const m = bg.querySelector('.modal');
+  const members = m.querySelector('#members');
+  m.querySelector('#add-member').onclick = () => {
+    const div = document.createElement('div');
+    div.className = 'row'; div.style.gap = '6px'; div.style.marginBottom = '6px';
+    div.innerHTML = `<select class="member-gw" style="flex:1">${memberOpts}</select>
+                     <input type="number" class="member-tier" value="1" style="width:80px" min="1" max="5">
+                     <button type="button" class="small danger remove-member">×</button>`;
+    members.appendChild(div);
+  };
+  members.addEventListener('click', e => {
+    if (e.target.classList.contains('remove-member')) e.target.closest('.row').remove();
+  });
+  const acts = document.createElement('div'); acts.className = 'actions';
+  const cancel = document.createElement('button'); cancel.textContent = 'Cancel'; cancel.onclick = () => bg.remove();
+  const save = document.createElement('button'); save.className = 'primary'; save.textContent = 'Save';
+  save.onclick = async () => {
+    const body = {
+      group: {
+        name: m.querySelector('[name=name]').value.trim(),
+        type: m.querySelector('[name=type]').value,
+        members: [...members.querySelectorAll('.row')].map(row => ({
+          gateway_id: row.querySelector('.member-gw').value,
+          tier: parseInt(row.querySelector('.member-tier').value)||1,
+        })),
+      },
+    };
+    try {
+      if (id) await nfw.api.put('/api/gateways/groups/' + id, body);
+      else    await nfw.api.post('/api/gateways/groups', body);
+      nfw.toast.ok('Saved'); bg.remove(); load();
+    } catch (e) { nfw.toast.err(e.message); }
+  };
+  acts.appendChild(cancel); acts.appendChild(save); m.appendChild(acts);
+}
+
+function addRoute() {
+  const gwOpts = GW.map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('');
+  const html = `
+    <label class="field"><span>Destination (CIDR)</span><input type="text" name="destination" placeholder="10.0.0.0/8"></label>
+    <label class="field"><span>Gateway</span>
+      <select name="gateway">${gwOpts || '<option value="">(no gateways defined)</option>'}</select>
+    </label>
+    <label class="field"><span>Description</span><input type="text" name="description"></label>
+  `;
+  nfw.modal.open({title: 'New static route', body: html});
+  const bg = document.querySelector('.modal-bg');
+  const m = bg.querySelector('.modal');
+  const acts = document.createElement('div'); acts.className = 'actions';
+  const cancel = document.createElement('button'); cancel.textContent = 'Cancel'; cancel.onclick = () => bg.remove();
+  const save = document.createElement('button'); save.className = 'primary'; save.textContent = 'Save';
+  save.onclick = async () => {
+    try {
+      await nfw.api.post('/api/gateways/routes', {
+        route: {
+          destination: m.querySelector('[name=destination]').value.trim(),
+          gateway: m.querySelector('[name=gateway]').value,
+          description: m.querySelector('[name=description]').value.trim(),
+        },
+      });
+      nfw.toast.ok('Route added'); bg.remove(); load();
+    } catch (e) { nfw.toast.err(e.message); }
+  };
+  acts.appendChild(cancel); acts.appendChild(save); m.appendChild(acts);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  load();
+  setInterval(load, 5000);
+  document.getElementById('add-gw').onclick = () => editGW(null);
+  document.getElementById('add-gwg').onclick = () => editGWG(null);
+  document.getElementById('add-route').onclick = addRoute;
+  document.getElementById('refresh').onclick = load;
+  document.getElementById('apply-routes').onclick = async () => {
+    try {
+      const r = await nfw.api.post('/api/gateways/apply');
+      nfw.toast.ok('Routes applied (' + (r.routes?.length || 0) + ')');
+    } catch (e) { nfw.toast.err(e.message); }
+  };
+});
+</script>
+{% endblock %}

@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}DHCP{% endblock %}
+{% block content %}
+<h1>DHCP Server</h1>
+<p class="subtitle">isc-dhcp-server — address pools and static reservations</p>
+
+<div class="row between" style="margin-bottom:12px">
+  <div class="row">
+    <label class="row" style="gap:6px"><input type="checkbox" id="enabled"> Enabled</label>
+  </div>
+  <div class="row">
+    <button id="add-subnet" class="small">+ Subnet</button>
+    <button id="save-btn" class="primary">Save &amp; Apply</button>
+    <button id="refresh-btn">Refresh</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Subnets</h2>
+  <div id="subnets"><div class="muted">Loading…</div></div>
+</div>
+
+<div class="card">
+  <h2>Active leases</h2>
+  <div id="leases"><div class="muted">Loading…</div></div>
+</div>
+
+<div class="card">
+  <h2>Preview (dhcpd.conf)</h2>
+  <pre class="code" id="preview" style="max-height:400px">—</pre>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let CFG = null;
+
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+async function load() {
+  const r = await nfw.api.get('/api/services/dhcp');
+  CFG = r.config || {};
+  document.getElementById('enabled').checked = !!CFG.enabled;
+  renderSubnets();
+  loadLeases();
+  loadPreview();
+}
+
+function renderSubnets() {
+  CFG.subnets = CFG.subnets || [];
+  if (CFG.subnets.length === 0) {
+    document.getElementById('subnets').innerHTML = '<div class="muted">No subnets yet</div>';
+    return;
+  }
+  const rows = CFG.subnets.map((s, i) => `
+    <tr>
+      <td><input type="text" data-i="${i}" data-k="network" value="${esc(s.network||'')}" style="width:140px"></td>
+      <td><input type="text" data-i="${i}" data-k="range_start" value="${esc(s.range_start||'')}" style="width:120px"></td>
+      <td><input type="text" data-i="${i}" data-k="range_end" value="${esc(s.range_end||'')}" style="width:120px"></td>
+      <td><input type="text" data-i="${i}" data-k="gateway" value="${esc(s.gateway||'')}" style="width:120px"></td>
+      <td><input type="text" data-i="${i}" data-k="domain" value="${esc(s.domain||'')}" style="width:100px"></td>
+      <td><button class="small danger" data-del="${i}">Del</button></td>
+    </tr>`).join('');
+  document.getElementById('subnets').innerHTML =
+    '<table class="data"><thead><tr><th>Network (CIDR)</th><th>Range start</th><th>Range end</th><th>Gateway</th><th>Domain</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+  document.querySelectorAll('#subnets input').forEach(el => el.addEventListener('input', e => {
+    const i = +e.target.dataset.i; const k = e.target.dataset.k;
+    CFG.subnets[i][k] = e.target.value;
+  }));
+  document.querySelectorAll('#subnets button[data-del]').forEach(b => b.addEventListener('click', e => {
+    CFG.subnets.splice(+e.target.dataset.del, 1); renderSubnets();
+  }));
+}
+
+async function loadLeases() {
+  try {
+    const r = await nfw.api.get('/api/services/dhcp/leases');
+    const leases = r.leases || [];
+    if (leases.length === 0) {
+      document.getElementById('leases').innerHTML = '<div class="muted">No leases</div>';
+      return;
+    }
+    const rows = leases.map(l => `
+      <tr>
+        <td class="mono">${esc(l.ip)}</td>
+        <td class="mono">${esc(l.mac||'')}</td>
+        <td>${esc(l.hostname||'')}</td>
+        <td class="mono">${esc(l.ends||'')}</td>
+      </tr>`).join('');
+    document.getElementById('leases').innerHTML =
+      '<table class="data"><thead><tr><th>IP</th><th>MAC</th><th>Hostname</th><th>Ends</th></tr></thead><tbody>' + rows + '</tbody></table>';
+  } catch (e) { /* ignore */ }
+}
+
+async function loadPreview() {
+  try {
+    const r = await nfw.api.get('/api/services/dhcp/preview');
+    document.getElementById('preview').textContent = r.config || '—';
+  } catch (_) {}
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  load();
+  document.getElementById('enabled').addEventListener('change', e => { CFG.enabled = e.target.checked; });
+  document.getElementById('add-subnet').addEventListener('click', () => {
+    CFG.subnets = CFG.subnets || [];
+    CFG.subnets.push({network: '192.168.10.0/24', range_start: '192.168.10.100', range_end: '192.168.10.200', gateway: '192.168.10.1', domain: 'lan'});
+    renderSubnets();
+  });
+  document.getElementById('refresh-btn').addEventListener('click', load);
+  document.getElementById('save-btn').addEventListener('click', async () => {
+    try {
+      // Send only the fields the page owns; the server merges the rest.
+      await nfw.api.put('/api/services/dhcp', {config: {
+        enabled: !!CFG.enabled,
+        interface: CFG.interface || 'lan',
+        authoritative: CFG.authoritative !== false,
+        default_lease_time: CFG.default_lease_time || 3600,
+        max_lease_time: CFG.max_lease_time || 86400,
+        subnets: CFG.subnets || [],
+        static_reservations: CFG.static_reservations || [],
+      }});
+      const r = await nfw.api.post('/api/services/dhcp/apply');
+      nfw.toast.ok('DHCP applied on ' + r.interface);
+      load();
+    } catch (e) { nfw.toast.err(e.message); }
+  });
+});
+</script>
+{% endblock %}

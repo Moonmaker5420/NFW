@@ -1,0 +1,248 @@
+{% extends "base.html" %}
+{% block title %}RADIUS{% endblock %}
+{% block content %}
+<h1>RADIUS Server</h1>
+<p class="subtitle">FreeRADIUS — 802.1X authentication and accounting for LAN NAS devices</p>
+
+<div class="row between" style="margin-bottom:12px">
+  <label class="row" style="gap:6px"><input type="checkbox" id="enabled"> Enabled</label>
+  <div class="row">
+    <button id="save-btn" class="primary">Save &amp; Apply</button>
+    <button id="refresh-btn">Refresh</button>
+  </div>
+</div>
+
+<div class="grid cols-2">
+  <div class="card">
+    <h2>Server</h2>
+    <label class="field"><span>Listen IP (blank = LAN address)</span>
+      <input type="text" id="listen_ip" placeholder="192.168.10.1">
+    </label>
+    <label class="field"><span>Auth port</span>
+      <input type="number" id="auth_port" value="1812">
+    </label>
+    <label class="field"><span>Accounting port</span>
+      <input type="number" id="acct_port" value="1813">
+    </label>
+    <label class="field"><span>Default EAP type</span>
+      <select id="default_eap_type">
+        <option value="peap">PEAP</option>
+        <option value="ttls">EAP-TTLS</option>
+        <option value="tls">EAP-TLS</option>
+      </select>
+    </label>
+    <label class="field"><span>Enabled EAP methods</span>
+      <div class="row" style="gap:12px;flex-wrap:wrap">
+        <label class="row" style="gap:4px"><input type="checkbox" class="eap" value="peap" checked> PEAP-MSCHAPv2</label>
+        <label class="row" style="gap:4px"><input type="checkbox" class="eap" value="ttls" checked> EAP-TTLS/PAP</label>
+        <label class="row" style="gap:4px"><input type="checkbox" class="eap" value="tls"> EAP-TLS (needs client certs)</label>
+      </div>
+    </label>
+    <label class="field"><span>Accounting</span>
+      <label class="row" style="gap:6px"><input type="checkbox" id="acct_on" checked> Log RADIUS accounting</label>
+    </label>
+    <label class="field"><span>LDAP auth</span>
+      <label class="row" style="gap:6px"><input type="checkbox" id="use_ldap"> Use LDAP backend (9.9b config)</label>
+    </label>
+    <label class="field"><span>localhost radtest shared secret</span>
+      <input type="text" id="localhost_secret" value="testing123">
+    </label>
+  </div>
+
+  <div class="card">
+    <h2>Status</h2>
+    <pre class="code" id="status" style="max-height:300px;overflow:auto">—</pre>
+  </div>
+</div>
+
+<div class="card">
+  <h2>NAS Clients</h2>
+  <p class="muted" style="margin-top:0">Switches / access points that will authenticate against this server.</p>
+  <div id="clients-tbl"></div>
+  <button id="add-client-btn" style="margin-top:8px">+ Add client</button>
+</div>
+
+<div class="card">
+  <h2>Local Users</h2>
+  <p class="muted" style="margin-top:0">WiFi / VPN users. Password is hashed at save time as NT-Password (MSCHAPv2).</p>
+  <div id="users-tbl"></div>
+  <button id="add-user-btn" style="margin-top:8px">+ Add user</button>
+</div>
+
+<div class="card">
+  <h2>Test authentication</h2>
+  <div class="row" style="gap:8px;align-items:flex-end">
+    <label class="field" style="flex:1"><span>Username</span><input type="text" id="test-user"></label>
+    <label class="field" style="flex:1"><span>Password</span><input type="text" id="test-pass"></label>
+    <button id="test-btn" class="primary">radtest</button>
+  </div>
+  <pre class="code" id="test-out" style="margin-top:8px;max-height:200px">—</pre>
+</div>
+
+<div class="card">
+  <h2>Preview — clients.conf</h2>
+  <pre class="code" id="prev-clients" style="max-height:200px">—</pre>
+  <h2 style="margin-top:16px">Preview — users (authorize)</h2>
+  <pre class="code" id="prev-authorize" style="max-height:200px">—</pre>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let CFG = {};
+let CLIENTS = [];
+let USERS = [];
+
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+async function load() {
+  try {
+    const r = await nfw.api.get('/api/services/radius');
+    CFG = r.config || {};
+    CLIENTS = CFG.clients || [];
+    USERS   = CFG.local_users || [];
+
+    document.getElementById('enabled').checked = !!CFG.enabled;
+    document.getElementById('listen_ip').value = CFG.listen_ip || '';
+    document.getElementById('auth_port').value = CFG.auth_port || 1812;
+    document.getElementById('acct_port').value = CFG.acct_port || 1813;
+    document.getElementById('default_eap_type').value = CFG.default_eap_type || 'peap';
+    document.getElementById('acct_on').checked = !!(CFG.accounting||{}).enabled;
+    document.getElementById('use_ldap').checked = !!CFG.use_ldap;
+    document.getElementById('localhost_secret').value = CFG.localhost_secret || 'testing123';
+    const methods = new Set(CFG.eap_methods || ['peap','ttls']);
+    document.querySelectorAll('input.eap').forEach(el => el.checked = methods.has(el.value));
+
+    renderClients();
+    renderUsers();
+    loadStatus();
+    loadPreview();
+  } catch (e) { nfw.toast.err(e.message); }
+}
+
+async function loadStatus() {
+  try {
+    const s = await nfw.api.get('/api/services/radius/status');
+    const txt = [
+      'service: ' + (s.service || 'unknown'),
+      'version: ' + (s.version || ''),
+      '',
+      'listening:',
+      s.listening || '  (none)',
+      '',
+      'log (tail):',
+      (s.log_tail || '').split('\n').slice(-15).join('\n'),
+    ].join('\n');
+    document.getElementById('status').textContent = txt;
+  } catch (e) {
+    document.getElementById('status').textContent = 'error: ' + e.message;
+  }
+}
+
+async function loadPreview() {
+  try {
+    const p = await nfw.api.get('/api/services/radius/preview');
+    document.getElementById('prev-clients').textContent = p.clients || '—';
+    document.getElementById('prev-authorize').textContent = p.authorize || '—';
+  } catch (e) { /* silent */ }
+}
+
+function renderClients() {
+  const el = document.getElementById('clients-tbl');
+  if (!CLIENTS.length) { el.innerHTML = '<div class="muted">No clients configured (localhost is implicit)</div>'; return; }
+  const rows = CLIENTS.map((c, i) => `
+    <tr>
+      <td class="mono">${esc(c.name)}</td>
+      <td class="mono">${esc(c.ip)}</td>
+      <td class="mono">${esc((c.secret||'').replace(/./g,'•'))}</td>
+      <td><button class="small danger" data-del-client="${i}">Del</button></td>
+    </tr>`).join('');
+  el.innerHTML = '<table class="data"><thead><tr><th>Name</th><th>IP / CIDR</th><th>Secret</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
+  el.querySelectorAll('[data-del-client]').forEach(b => b.onclick = () => {
+    CLIENTS.splice(parseInt(b.getAttribute('data-del-client'), 10), 1);
+    renderClients();
+  });
+}
+
+function renderUsers() {
+  const el = document.getElementById('users-tbl');
+  if (!USERS.length) { el.innerHTML = '<div class="muted">No local users</div>'; return; }
+  const rows = USERS.map((u, i) => `
+    <tr>
+      <td class="mono">${esc(u.username)}</td>
+      <td class="mono">${u.nt_hash ? '<span class="badge ok">NT-Hash set</span>' : '<span class="badge danger">no password</span>'}</td>
+      <td>${u.enabled === false ? 'disabled' : 'enabled'}</td>
+      <td><button class="small danger" data-del-user="${i}">Del</button></td>
+    </tr>`).join('');
+  el.innerHTML = '<table class="data"><thead><tr><th>Username</th><th>Password</th><th>State</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
+  el.querySelectorAll('[data-del-user]').forEach(b => b.onclick = () => {
+    USERS.splice(parseInt(b.getAttribute('data-del-user'), 10), 1);
+    renderUsers();
+  });
+}
+
+async function promptAddClient() {
+  const name = prompt('Client name (shortname):'); if (!name) return;
+  const ip = prompt('IP or CIDR (e.g. 192.168.10.2 or 192.168.10.0/24):'); if (!ip) return;
+  const secret = prompt('Shared secret (min 6 chars):'); if (!secret) return;
+  CLIENTS.push({name, ip, secret});
+  renderClients();
+}
+
+async function promptAddUser() {
+  const username = prompt('Username:'); if (!username) return;
+  const password = prompt('Password (will be hashed to NT-Password):'); if (!password) return;
+  try {
+    const r = await nfw.api.post('/api/services/radius/hash-nt', {password});
+    USERS.push({username, nt_hash: r.nt_hash, enabled: true});
+    renderUsers();
+    nfw.toast.ok('User ' + username + ' added (staged)');
+  } catch (e) { nfw.toast.err(e.message); }
+}
+
+function collectEapMethods() {
+  const out = [];
+  document.querySelectorAll('input.eap').forEach(el => { if (el.checked) out.push(el.value); });
+  return out;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  load();
+  document.getElementById('refresh-btn').onclick = load;
+  document.getElementById('add-client-btn').onclick = promptAddClient;
+  document.getElementById('add-user-btn').onclick = promptAddUser;
+
+  document.getElementById('save-btn').onclick = async () => {
+    const config = {
+      enabled: document.getElementById('enabled').checked,
+      listen_ip: document.getElementById('listen_ip').value.trim(),
+      auth_port: parseInt(document.getElementById('auth_port').value, 10) || 1812,
+      acct_port: parseInt(document.getElementById('acct_port').value, 10) || 1813,
+      default_eap_type: document.getElementById('default_eap_type').value,
+      eap_methods: collectEapMethods(),
+      accounting: {enabled: document.getElementById('acct_on').checked},
+      use_ldap: document.getElementById('use_ldap').checked,
+      localhost_secret: document.getElementById('localhost_secret').value || 'testing123',
+      clients: CLIENTS,
+      local_users: USERS,
+    };
+    try {
+      await nfw.api.put('/api/services/radius', {config});
+      const r = await nfw.api.post('/api/services/radius/apply');
+      nfw.toast.ok('RADIUS applied');
+      setTimeout(load, 500);
+    } catch (e) { nfw.toast.err(e.message); }
+  };
+
+  document.getElementById('test-btn').onclick = async () => {
+    const u = document.getElementById('test-user').value;
+    const p = document.getElementById('test-pass').value;
+    const out = document.getElementById('test-out');
+    out.textContent = 'testing...';
+    try {
+      const r = await nfw.api.post('/api/services/radius/test', {username: u, password: p});
+      out.textContent = (r.stdout || '') + '\n' + (r.stderr || '');
+    } catch (e) { out.textContent = 'error: ' + e.message; }
+  };
+});
+</script>
+{% endblock %}

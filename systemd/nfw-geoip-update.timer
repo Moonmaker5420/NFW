@@ -1,0 +1,9 @@
+[Unit]
+Description=Monthly NFW GeoIP database update
+
+[Timer]
+OnCalendar=monthly
+Persistent=true
+
+[Install]
+WantedBy=timers.target

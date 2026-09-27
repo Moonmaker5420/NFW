@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Backup{% endblock %}
+{% block content %}
+<h1>Configuration Backup</h1>
+<p class="subtitle">Export and restore the entire NFW configuration</p>
+
+<div class="row between" style="margin-bottom:12px">
+  <button id="export-btn" class="primary">Download backup</button>
+  <div class="row">
+    <input type="file" id="import-file" style="display:none">
+    <button id="import-btn">Import backup…</button>
+    <button id="refresh">Refresh</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Backups on disk</h2>
+  <div id="backups"><div class="muted">Loading…</div></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+async function load() {
+  try {
+    const r = await nfw.api.get('/api/advanced/backup');
+    const items = r.backups || [];
+    document.getElementById('backups').innerHTML = items.length ? 
+      '<table class="data"><thead><tr><th>Name</th><th>Size</th><th>Date</th></tr></thead><tbody>' +
+      items.map(b => `<tr><td class="mono">${esc(b.name)}</td><td class="num">${(b.size/1024).toFixed(1)} KB</td><td>${new Date(b.mtime*1000).toLocaleString()}</td></tr>`).join('') +
+      '</tbody></table>' : '<div class="muted">No backups</div>';
+  } catch (e) { nfw.toast.err(e.message); }
+}
+document.getElementById('refresh').onclick = load;
+document.getElementById('export-btn').onclick = () => {
+  window.location.href = '/api/advanced/backup/export';
+};
+document.getElementById('import-btn').onclick = () => document.getElementById('import-file').click();
+document.getElementById('import-file').onchange = async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  if (!confirm('Import backup? This will REPLACE your current configuration. A pre-import backup will be saved first.')) return;
+  const reader = new FileReader();
+  reader.onload = async () => {
+    const b64 = btoa(String.fromCharCode(...new Uint8Array(reader.result)));
+    try {
+      await nfw.api.post('/api/advanced/backup/import', {data_b64: b64});
+      nfw.toast.ok('Imported. Restart NFW services to apply.');
+      load();
+    } catch (e) { nfw.toast.err(e.message); }
+  };
+  reader.readAsArrayBuffer(f);
+};
+document.addEventListener('DOMContentLoaded', load);
+</script>
+{% endblock %}

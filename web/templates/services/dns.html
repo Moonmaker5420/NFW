@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}DNS{% endblock %}
+{% block content %}
+<h1>Unbound DNS</h1>
+<p class="subtitle">Recursive resolver with DoT, blocklists, and host overrides</p>
+
+<div class="row between" style="margin-bottom:12px">
+  <label class="row" style="gap:6px"><input type="checkbox" id="enabled"> Enabled</label>
+  <div class="row">
+    <button id="save-btn" class="primary">Save &amp; Apply</button>
+    <button id="refresh-btn">Refresh</button>
+  </div>
+</div>
+
+<div class="grid cols-2">
+  <div class="card">
+    <h2>Settings</h2>
+    <label class="row" style="gap:6px"><input type="checkbox" id="dnssec"> DNSSEC validation</label>
+    <label class="row" style="gap:6px"><input type="checkbox" id="dotls"> Forward via DNS-over-TLS</label>
+    <label class="row" style="gap:6px"><input type="checkbox" id="blk"> Enable blocklist</label>
+    <label class="field"><span>Local zone</span><input type="text" id="localzone"></label>
+  </div>
+  <div class="card">
+    <h2>Blocklist domains (one per line)</h2>
+    <textarea id="blocklist-domains" rows="8" style="width:100%"></textarea>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Preview (unbound.conf)</h2>
+  <pre class="code" id="preview" style="max-height:400px">—</pre>
+</div>
+
+<div class="card">
+  <h2>Query log (tail)</h2>
+  <pre class="code" id="qlog" style="max-height:300px">—</pre>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let CFG = null;
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+async function load() {
+  const r = await nfw.api.get('/api/services/dns');
+  CFG = r.config || {};
+  CFG.blocklists = CFG.blocklists || {enabled: false, domains: []};
+  document.getElementById('enabled').checked = !!CFG.enabled;
+  document.getElementById('dnssec').checked = !!CFG.dnssec;
+  document.getElementById('dotls').checked = !!CFG.do_tls;
+  document.getElementById('blk').checked = !!CFG.blocklists.enabled;
+  document.getElementById('localzone').value = CFG.local_zone || 'lan';
+  document.getElementById('blocklist-domains').value = (CFG.blocklists.domains || []).join('\n');
+  loadPreview();
+  loadQLog();
+}
+
+async function loadPreview() {
+  try {
+    const r = await nfw.api.get('/api/services/dns/preview');
+    document.getElementById('preview').textContent = r.config || '—';
+  } catch (_) {}
+}
+
+async function loadQLog() {
+  try {
+    const r = await nfw.api.get('/api/services/dns/querylog?lines=50');
+    document.getElementById('qlog').textContent = (r.lines || []).join('\n') || '(empty)';
+  } catch (_) {}
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  load();
+  document.getElementById('refresh-btn').addEventListener('click', load);
+  document.getElementById('save-btn').addEventListener('click', async () => {
+    CFG.enabled = document.getElementById('enabled').checked;
+    CFG.dnssec = document.getElementById('dnssec').checked;
+    CFG.do_tls = document.getElementById('dotls').checked;
+    CFG.local_zone = document.getElementById('localzone').value;
+    CFG.blocklists.enabled = document.getElementById('blk').checked;
+    CFG.blocklists.domains = document.getElementById('blocklist-domains').value
+      .split('\n').map(s => s.trim()).filter(Boolean);
+    try {
+      // Preserve the config object as loaded — the API only uses what
+      // we send, and merges with what's stored. We deliberately do NOT
+      // send forwarders_tls / access_control from this page (they're
+      // managed by the CLI/API for now), so the server keeps them.
+      const payload = {
+        enabled: !!CFG.enabled,
+        dnssec: CFG.dnssec !== false,
+        do_tls: !!CFG.do_tls,
+        local_zone: CFG.local_zone || 'lan',
+        listen: CFG.listen || ['0.0.0.0'],
+        port: CFG.port || 53,
+        recursive: CFG.recursive !== false,
+        qname_minimisation: CFG.qname_minimisation !== false,
+        hide_identity: CFG.hide_identity !== false,
+        hide_version: CFG.hide_version !== false,
+        prefetch: CFG.prefetch !== false,
+        so_reuseport: CFG.so_reuseport !== false,
+        num_threads: CFG.num_threads || 2,
+        blocklists: CFG.blocklists || {enabled: false, domains: [], sources: []},
+      };
+      await nfw.api.put('/api/services/dns', {config: payload});
+      await nfw.api.post('/api/services/dns/apply');
+      nfw.toast.ok('DNS applied');
+      load();
+    } catch (e) { nfw.toast.err(e.message); }
+  });
+});
+</script>
+{% endblock %}

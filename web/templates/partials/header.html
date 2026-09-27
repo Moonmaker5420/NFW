@@ -1,0 +1,9 @@
+<header class="app-header">
+  <button id="sidebar-toggle" type="button" title="Toggle sidebar (Ctrl+B)">&#9776;</button>
+  <span class="brand">NFW<span class="dot">.</span></span>
+  <span class="host">{{ hostname|default('') }}</span>
+  <span class="spacer"></span>
+  <button id="theme-toggle" title="Toggle theme">&#9788;</button>
+  <span class="muted" style="font-size:12px">{{ user.username }} ({{ user.role }})</span>
+  <a href="#" id="logout-btn" class="btn small">Logout</a>
+</header>

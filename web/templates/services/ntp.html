@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}NTP{% endblock %}
+{% block content %}
+<h1>NTP (chrony)</h1>
+<p class="subtitle">Client or server mode</p>
+
+<div class="row between" style="margin-bottom:12px">
+  <label class="row" style="gap:6px"><input type="checkbox" id="enabled"> Enabled</label>
+  <div class="row">
+    <button id="save-btn" class="primary">Save &amp; Apply</button>
+    <button id="refresh-btn">Refresh</button>
+  </div>
+</div>
+
+<div class="grid cols-2">
+  <div class="card">
+    <h2>Mode</h2>
+    <label class="field"><span>Mode</span>
+      <select id="mode">
+        <option value="client">Client</option>
+        <option value="server">Server (serve LAN clients)</option>
+      </select>
+    </label>
+    <label class="field"><span>Upstream servers (one per line)</span>
+      <textarea id="servers" rows="5"></textarea>
+    </label>
+  </div>
+  <div class="card">
+    <h2>Status</h2>
+    <pre class="code" id="status">—</pre>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Preview (chrony.conf)</h2>
+  <pre class="code" id="preview" style="max-height:300px">—</pre>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let CFG = null;
+async function load() {
+  const r = await nfw.api.get('/api/services/ntp');
+  CFG = r.config || {};
+  document.getElementById('enabled').checked = !!CFG.enabled;
+  document.getElementById('mode').value = CFG.mode || 'client';
+  document.getElementById('servers').value = (CFG.servers || []).join('\n');
+  const s = await nfw.api.get('/api/services/ntp/status');
+  document.getElementById('status').textContent = (s.tracking || '') + '\n' + (s.sources || '');
+  const p = await nfw.api.get('/api/services/ntp/preview');
+  document.getElementById('preview').textContent = p.config || '—';
+}
+document.addEventListener('DOMContentLoaded', () => {
+  load();
+  document.getElementById('refresh-btn').addEventListener('click', load);
+  document.getElementById('save-btn').addEventListener('click', async () => {
+    CFG.enabled = document.getElementById('enabled').checked;
+    CFG.mode = document.getElementById('mode').value;
+    CFG.servers = document.getElementById('servers').value
+      .split('\n').map(s => s.trim()).filter(Boolean);
+    try {
+      await nfw.api.put('/api/services/ntp', {config: {
+        enabled: !!CFG.enabled,
+        mode: CFG.mode || 'client',
+        servers: CFG.servers || [],
+        allow_clients: CFG.allow_clients || [],
+      }});
+      await nfw.api.post('/api/services/ntp/apply');
+      nfw.toast.ok('NTP applied');
+      load();
+    } catch (e) { nfw.toast.err(e.message); }
+  });
+});
+</script>
+{% endblock %}

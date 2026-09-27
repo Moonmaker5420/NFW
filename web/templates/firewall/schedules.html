@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}Schedules{% endblock %}
+{% block content %}
+<h1>Schedules</h1>
+<p class="subtitle">Named day/time ranges that firewall rules can reference.</p>
+
+<div class="row between" style="margin-bottom:12px">
+  <button id="add-btn" class="small primary">+ Add schedule</button>
+  <div class="row">
+    <button id="refresh-btn">Refresh</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Active right now</h2>
+  <div id="active"><div class="muted">Loading…</div></div>
+</div>
+
+<div class="card">
+  <h2>Schedules</h2>
+  <div id="tbl"><div class="muted">Loading…</div></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let SCHED = [];
+const DAYS = ['mon','tue','wed','thu','fri','sat','sun'];
+
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+async function load() {
+  try {
+    SCHED = (await nfw.api.get('/api/firewall/schedules')).schedules || [];
+    const a = await nfw.api.get('/api/firewall/schedules/active');
+    document.getElementById('active').innerHTML =
+      `<span class="badge info">now: ${esc(a.now)}</span> ` +
+      (a.active && a.active.length
+        ? a.active.map(n => `<span class="badge ok">${esc(n)}</span>`).join(' ')
+        : '<span class="muted">(none active)</span>');
+    render();
+  } catch (e) { nfw.toast.err(e.message); }
+}
+
+function render() {
+  if (SCHED.length === 0) {
+    document.getElementById('tbl').innerHTML = '<div class="muted">No schedules yet</div>';
+    return;
+  }
+  const rows = SCHED.map(s => {
+    const ranges = (s.ranges || []).map(r =>
+      `<div class="mono" style="font-size:11px">${esc((r.days || []).join(','))} ${esc(r.start)}–${esc(r.end)}</div>`
+    ).join('') || '<span class="muted">(no ranges)</span>';
+    return `
+      <tr>
+        <td style="width:36px"><input type="checkbox" ${s.enabled !== false ? 'checked' : ''} data-toggle="${esc(s.id)}" style="width:auto"></td>
+        <td class="mono">${esc(s.name)}</td>
+        <td>${esc(s.description || '')}</td>
+        <td>${ranges}</td>
+        <td style="width:120px">
+          <button class="small" data-edit="${esc(s.id)}">Edit</button>
+          <button class="small danger" data-del="${esc(s.id)}">Del</button>
+        </td>
+      </tr>`;
+  }).join('');
+  document.getElementById('tbl').innerHTML =
+    '<table class="data"><thead><tr><th>On</th><th>Name</th><th>Description</th><th>Ranges</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+  bind();
+}
+
+function bind() {
+  document.querySelectorAll('[data-toggle]').forEach(el => el.addEventListener('change', async () => {
+    try { await nfw.api.post('/api/firewall/schedules/' + el.getAttribute('data-toggle') + '/toggle'); load(); }
+    catch (e) { nfw.toast.err(e.message); }
+  }));
+  document.querySelectorAll('[data-del]').forEach(el => el.addEventListener('click', async () => {
+    if (!confirm('Delete this schedule?')) return;
+    try { await nfw.api.del('/api/firewall/schedules/' + el.getAttribute('data-del')); load(); }
+    catch (e) { nfw.toast.err(e.message); }
+  }));
+  document.querySelectorAll('[data-edit]').forEach(el => el.addEventListener('click', () => edit(el.getAttribute('data-edit'))));
+}
+
+function edit(id) {
+  const s = id ? SCHED.find(x => x.id === id)
+               : {name:'', description:'', ranges:[{days:['mon','tue','wed','thu','fri'], start:'09:00', end:'17:00'}], enabled:true};
+
+  const rangesHtml = (s.ranges || []).map((r, i) => rangeRow(r, i)).join('');
+  const html = `
+    <label class="field"><span>Name (letters/digits/-/_)</span><input type="text" name="name" value="${esc(s.name)}"></label>
+    <label class="field"><span>Description</span><input type="text" name="description" value="${esc(s.description||'')}"></label>
+    <div class="field"><span style="display:block;margin-bottom:4px;color:var(--fg-dim);font-size:12px">Time ranges</span>
+      <div id="ranges">${rangesHtml}</div>
+      <button type="button" class="small mt-2" id="add-range">+ Add range</button>
+    </div>
+    <label class="row" style="gap:6px;margin-top:8px"><input type="checkbox" name="enabled" ${s.enabled !== false ? 'checked' : ''}> Enabled</label>
+  `;
+
+  nfw.modal.open({
+    title: id ? 'Edit schedule' : 'New schedule',
+    body: html,
+    actions: [
+      { label: 'Cancel', onClick: (e, close) => close() },
+      { label: 'Save', className: 'primary', onClick: async (e, close) => {
+          const m = document.querySelector('.modal');
+          const body = {
+            name: m.querySelector('[name=name]').value.trim(),
+            description: m.querySelector('[name=description]').value.trim(),
+            enabled: m.querySelector('[name=enabled]').checked,
+            ranges: [],
+          };
+          m.querySelectorAll('.range-row').forEach(rr => {
+            const days = [...rr.querySelectorAll('input[type=checkbox]:checked')].map(c => c.value);
+            body.ranges.push({
+              days,
+              start: rr.querySelector('.start').value,
+              end:   rr.querySelector('.end').value,
+            });
+          });
+          try {
+            if (id) await nfw.api.put('/api/firewall/schedules/' + id, {schedule: body});
+            else    await nfw.api.post('/api/firewall/schedules', {schedule: body});
+            nfw.toast.ok('Saved');
+            close();
+            load();
+          } catch (err) { nfw.toast.err(err.message); }
+        }
+      },
+    ],
+  });
+
+  const m = document.querySelector('.modal');
+  m.querySelector('#add-range').addEventListener('click', () => {
+    const div = document.createElement('div');
+    div.innerHTML = rangeRow({days:['mon','tue','wed','thu','fri'], start:'09:00', end:'17:00'}, Date.now());
+    m.querySelector('#ranges').appendChild(div.firstElementChild);
+    wireRemoves(m);
+  });
+  wireRemoves(m);
+}
+
+function rangeRow(r, i) {
+  const dayChecks = DAYS.map(d =>
+    `<label style="font-size:11px;margin-right:4px"><input type="checkbox" value="${d}" ${r.days && r.days.includes(d) ? 'checked' : ''}> ${d}</label>`
+  ).join('');
+  return `
+    <div class="range-row" style="border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:6px">
+      <div style="margin-bottom:6px">${dayChecks}</div>
+      <div class="row" style="gap:6px">
+        <input type="text" class="start" value="${esc(r.start||'09:00')}" style="width:80px" placeholder="09:00">
+        <span>to</span>
+        <input type="text" class="end" value="${esc(r.end||'17:00')}" style="width:80px" placeholder="17:00">
+        <button type="button" class="small danger remove-range">×</button>
+      </div>
+    </div>`;
+}
+
+function wireRemoves(m) {
+  m.querySelectorAll('.remove-range').forEach(b => b.onclick = () => b.closest('.range-row').remove());
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  load();
+  document.getElementById('refresh-btn').addEventListener('click', load);
+  document.getElementById('add-btn').addEventListener('click', () => edit(null));
+});
+</script>
+{% endblock %}

@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Traffic Shaping{% endblock %}
+{% block content %}
+<h1>Traffic Shaping</h1>
+<p class="subtitle">CAKE / HTB queues per interface to fight bufferbloat and limit bandwidth.</p>
+
+<div class="row between" style="margin-bottom:12px">
+  <label class="row" style="gap:6px"><input type="checkbox" id="enabled"> Enabled</label>
+  <div class="row">
+    <button id="add-iface" class="small">+ Add interface</button>
+    <button id="apply-btn" class="primary">Save &amp; Apply</button>
+    <button id="refresh">Refresh</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Shaped interfaces</h2>
+  <div id="ifaces-tbl"><div class="muted">Loading…</div></div>
+</div>
+
+<div class="card">
+  <h2>Live qdisc state</h2>
+  <pre class="code" id="status" style="max-height:300px">—</pre>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let CFG = {};
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+async function load() {
+  try {
+    const r = await nfw.api.get('/api/shaper');
+    CFG = r.config || {};
+    CFG.interfaces = CFG.interfaces || [];
+    document.getElementById('enabled').checked = !!CFG.enabled;
+    renderIfaces();
+    renderStatus(r.status);
+  } catch (e) { nfw.toast.err(e.message); }
+}
+
+function renderIfaces() {
+  if (CFG.interfaces.length === 0) {
+    document.getElementById('ifaces-tbl').innerHTML = '<div class="muted">No interfaces shaped</div>';
+    return;
+  }
+  const rows = CFG.interfaces.map((it, i) => `
+    <tr>
+      <td><input type="text" data-i="${i}" data-k="role" value="${esc(it.role||'wan')}" style="width:100px"></td>
+      <td>
+        <select data-i="${i}" data-k="algorithm">
+          <option value="cake" ${it.algorithm==='cake'?'selected':''}>CAKE</option>
+          <option value="htb" ${it.algorithm==='htb'?'selected':''}>HTB</option>
+        </select>
+      </td>
+      <td><input type="number" data-i="${i}" data-k="upload_kbps" value="${it.upload_kbps||''}" placeholder="kbps" style="width:120px"></td>
+      <td><input type="number" data-i="${i}" data-k="download_kbps" value="${it.download_kbps||''}" placeholder="kbps" style="width:120px"></td>
+      <td><button class="small danger" data-del="${i}">Del</button></td>
+    </tr>`).join('');
+  document.getElementById('ifaces-tbl').innerHTML =
+    '<table class="data"><thead><tr><th>Role</th><th>Algorithm</th><th>Upload kbps</th><th>Download kbps</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+  document.querySelectorAll('#ifaces-tbl input, #ifaces-tbl select').forEach(el => el.addEventListener('input', e => {
+    const i = +e.target.dataset.i, k = e.target.dataset.k;
+    const v = e.target.value;
+    CFG.interfaces[i][k] = (k === 'upload_kbps' || k === 'download_kbps') ? (parseInt(v)||0) : v;
+  }));
+  document.querySelectorAll('#ifaces-tbl [data-del]').forEach(b => b.addEventListener('click', () => {
+    CFG.interfaces.splice(+b.getAttribute('data-del'), 1);
+    renderIfaces();
+  }));
+}
+
+function renderStatus(st) {
+  if (!st) return;
+  const lines = (st.interfaces||[]).map(i => `# ${i.iface} (${i.role})\n${i.qdisc||'(no qdisc)'}`);
+  document.getElementById('status').textContent = lines.join('\n\n') || '—';
+}
+
+document.getElementById('refresh').onclick = load;
+document.getElementById('add-iface').onclick = () => {
+  CFG.interfaces.push({role:'wan', algorithm:'cake', upload_kbps: 20000, download_kbps: 100000});
+  renderIfaces();
+};
+document.getElementById('apply-btn').onclick = async () => {
+  CFG.enabled = document.getElementById('enabled').checked;
+  try {
+    await nfw.api.put('/api/shaper', {config: CFG});
+    await nfw.api.post('/api/shaper/apply');
+    nfw.toast.ok('Shaping applied');
+    load();
+  } catch (e) { nfw.toast.err(e.message); }
+};
+document.addEventListener('DOMContentLoaded', load);
+</script>
+{% endblock %}

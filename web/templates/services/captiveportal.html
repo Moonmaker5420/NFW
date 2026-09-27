@@ -1,0 +1,1065 @@
+{% extends "base.html" %}
+{% block title %}Captive Portal{% endblock %}
+{% block content %}
+<h1>Captive Portal</h1>
+<p class="subtitle">Require authentication before LAN clients can reach the internet</p>
+
+<div class="row between" style="margin-bottom:12px">
+  <label class="row" style="gap:6px"><input type="checkbox" id="enabled"> Enabled</label>
+  <div class="row">
+    <button id="save-btn" class="primary">Save &amp; Apply</button>
+    <button id="refresh-btn">Refresh</button>
+  </div>
+</div>
+
+<div class="grid cols-2">
+  <div class="card">
+    <h2>Server</h2>
+    <label class="field"><span>Interface (LAN role)</span>
+      <input type="text" id="interface" value="lan" disabled>
+    </label>
+    <label class="field"><span>Portal port</span>
+      <input type="number" id="portal_port" value="8081">
+    </label>
+    <label class="field"><span>Gateway name (shown to guests)</span>
+      <input type="text" id="gateway_name" placeholder="NFW Captive Portal">
+    </label>
+    <label class="field"><span>Welcome message</span>
+      <input type="text" id="welcome_text" placeholder="Welcome to the network.">
+    </label>
+    <label class="field"><span>Session timeout (seconds)</span>
+      <input type="number" id="session_timeout" value="3600">
+    </label>
+    <label class="field"><span>Idle timeout (seconds)</span>
+      <input type="number" id="idle_timeout" value="600">
+    </label>
+  </div>
+
+  <div class="card">
+    <h2>Status</h2>
+    <pre class="code" id="status" style="max-height:320px;overflow:auto">—</pre>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Authentication</h2>
+  <label class="field"><span>Backends (tried in order)</span>
+    <div class="row" style="gap:12px;flex-wrap:wrap">
+      <label class="row" style="gap:4px"><input type="checkbox" class="backend" value="local" checked> Local (users.json)</label>
+      <label class="row" style="gap:4px"><input type="checkbox" class="backend" value="ldap" checked> LDAP</label>
+      <label class="row" style="gap:4px"><input type="checkbox" class="backend" value="radius"> RADIUS</label>
+    </div>
+  </label>
+  <label class="field"><span>Terms of Service</span>
+    <label class="row" style="gap:6px"><input type="checkbox" id="tos_required"> Require TOS acceptance</label>
+  </label>
+  <label class="field"><span>TOS text (shown in a scrollable box on the portal)</span>
+    <textarea id="tos_text" rows="5"></textarea>
+  </label>
+</div>
+
+<div class="card" id="auth_mode-card">
+  <h2>Auth mode &amp; Timeouts</h2>
+  <p class="muted" style="margin-top:0">Choose how guests authenticate and how long sessions last.</p>
+
+  <label class="field"><span>Auth mode</span>
+    <select id="auth_mode">
+      <option value="multi">Multi — username/password + voucher</option>
+      <option value="credentials">Credentials only</option>
+      <option value="voucher">Voucher only</option>
+      <option value="splash">Splash only (no credentials, TOS + Connect)</option>
+    </select>
+  </label>
+
+  <div id="splash-fields" style="display:none">
+    <label class="field"><span>Splash button label</span>
+      <input type="text" id="splash_label" value="Connect">
+    </label>
+    <label class="field"><span>Splash extra text (optional)</span>
+      <textarea id="splash_extra_text" rows="3"
+        placeholder="e.g. This is a demo network. By connecting you accept fair use."></textarea>
+    </label>
+  </div>
+
+  <div class="grid cols-2" style="margin-top:12px">
+    <label class="field"><span>Hard timeout (seconds, 0 = off)</span>
+      <input type="number" id="hard_timeout" value="0" min="0">
+    </label>
+    <label class="field"><span>Welcome back (seconds, 0 = off)</span>
+      <input type="number" id="welcome_back" value="0" min="0" max="86400">
+    </label>
+    <label class="field"><span>Concurrent logins per user (0 = unlimited)</span>
+      <input type="number" id="concurrent_logins" value="0" min="0" max="100">
+    </label>
+    <label class="field"><span>Concurrent mode</span>
+      <select id="concurrent_mode">
+        <option value="deny_new">Deny new login</option>
+        <option value="kick_oldest">Kick oldest session</option>
+      </select>
+    </label>
+  </div>
+  <p class="muted" style="margin-top:8px;font-size:12px">
+    <b>Hard timeout</b> — absolute session cap from first auth (can't be renewed).<br>
+    <b>Welcome back</b> — grace window; disconnected clients reconnect without re-login.<br>
+    <b>Concurrent logins</b> — max simultaneous sessions per username across all devices.
+  </p>
+
+  <h3 style="margin-top:20px;font-size:14px;color:#8b949e">Default bandwidth per session</h3>
+  <p class="muted" style="margin-top:4px;font-size:12px">
+    Applied to password / splash sessions (voucher-specific limits override). Set 0 for unlimited.
+    Uses HTB on WAN (upload) + LAN (download) — <b>only one shaper root per interface</b>, so this
+    is exclusive with the global Shaping module on the same interfaces.
+  </p>
+  <div class="grid cols-2" style="margin-top:8px">
+    <label class="field"><span>Upload limit (kbps, 0 = off)</span>
+      <input type="number" id="default_bandwidth_up_kbps" value="0" min="0" step="64">
+    </label>
+    <label class="field"><span>Download limit (kbps, 0 = off)</span>
+      <input type="number" id="default_bandwidth_down_kbps" value="0" min="0" step="64">
+    </label>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Walled Garden</h2>
+  <p class="muted" style="margin-top:0">IPs and CIDRs that unauthenticated guests may reach, in addition to the portal (one per line). Example: <code>1.1.1.1</code>, <code>8.8.8.0/24</code>. Domain entries are accepted but ignored in 9.18a (they land in 9.18b).</p>
+  <textarea id="walled_garden" rows="6" style="width:100%"></textarea>
+</div>
+
+<div class="card" id="bypass-card">
+  <h2>Bypass</h2>
+  <p class="muted" style="margin-top:0">
+    Skip the portal entirely for specific MAC addresses, or allow selected hostnames
+    (DNS-resolved to IPs) as part of the walled garden. Refresh runs every
+    <span id="bypass-refresh-secs">120</span>s via <code>nfw-cp-bypass-refresh.timer</code>.
+  </p>
+
+  <div class="grid cols-2">
+    <label class="field"><span>Bypass MAC addresses (one per line)</span>
+      <textarea id="bypass_macs" rows="6" placeholder="AA:BB:CC:DD:EE:FF&#10;11:22:33:44:55:66"></textarea>
+    </label>
+    <label class="field"><span>Bypass hostnames (one per line — FQDN only, no wildcards)</span>
+      <textarea id="bypass_hostnames" rows="6" placeholder="example.com&#10;updates.example.org"></textarea>
+    </label>
+  </div>
+
+  <label class="field" style="max-width:300px"><span>Refresh interval (seconds, 30–3600)</span>
+    <input type="number" id="bypass_refresh_seconds" value="120" min="30" max="3600">
+  </label>
+
+  <div class="row" style="gap:8px;margin-top:8px">
+    <button id="bypass-refresh-btn" class="primary">Refresh caches now</button>
+    <button id="bypass-reload-btn">Reload status</button>
+  </div>
+
+  <details style="margin-top:14px">
+    <summary style="cursor:pointer;color:#8b949e">Show resolved cache</summary>
+    <pre class="code" id="bypass-cache" style="margin-top:8px;max-height:320px;overflow:auto">—</pre>
+  </details>
+
+  <h3 style="margin-top:16px;font-size:14px;color:#8b949e">Temporary un-bypasses (from Kick 1h)</h3>
+  <div id="kicks-tbl"><div class="muted">Loading…</div></div>
+</div>
+
+<div class="card">
+  <h2>Active Sessions</h2>
+  <div class="row between" style="margin-bottom:12px;flex-wrap:wrap;gap:8px">
+    <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+      <label class="row" style="gap:6px;align-items:center">
+        <span class="muted" style="margin:0">Kind:</span>
+        <select id="sess-filter-kind">
+          <option value="all">All</option>
+          <option value="auth">Authenticated</option>
+          <option value="voucher">Voucher</option>
+          <option value="splash">Splash</option>
+          <option value="bypass">Bypassed (MAC)</option>
+          <option value="unauthenticated">Not signed in</option>
+        </select>
+      </label>
+      <input type="text" id="sess-search" placeholder="Search IP / user / MAC…" style="min-width:200px;padding:6px 10px">
+      <label class="row" style="gap:6px;align-items:center">
+        <input type="checkbox" id="sess-autorefresh" checked> <span class="muted" style="margin:0">auto 5s</span>
+      </label>
+      <span class="muted" id="sess-count" style="margin-left:6px"></span>
+    </div>
+    <div class="row" style="gap:8px">
+      <button id="refresh-sessions-btn">Refresh</button>
+      <button id="prune-btn">Prune expired</button>
+    </div>
+  </div>
+  <div id="sessions-tbl"><div class="muted">Loading…</div></div>
+  <p class="muted" style="margin-top:8px;font-size:12px">
+    <b>Kick semantics:</b> authenticated/voucher/splash sessions disconnect and drop the IP from the nft set.
+    Bypassed MACs are temporarily un-bypassed for 1h — the device will hit the portal on its next HTTP request.
+  </p>
+</div>
+
+<div class="card" id="template-card">
+  <h2>Custom Template</h2>
+  <p class="muted" style="margin-top:0">
+    Upload a ZIP whose root contains <code>login.html</code>. Variables use
+    <code>{{name}}</code> syntax; the file is served verbatim otherwise.
+    Download the starter for a documented example.
+  </p>
+
+  <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:12px">
+    <button id="tpl-download-starter">Download starter ZIP</button>
+    <label class="row" style="gap:6px;align-items:center;cursor:pointer">
+      <span class="primary" style="padding:6px 12px;border-radius:6px;color:#fff;cursor:pointer">Upload template…</span>
+      <input type="file" id="tpl-file-input" accept=".zip" style="display:none">
+    </label>
+    <button id="tpl-refresh">Refresh list</button>
+    <label class="row" style="gap:6px;align-items:center">
+      <input type="checkbox" id="tpl-active-enabled">
+      <span class="muted" style="margin:0">Use selected template</span>
+    </label>
+  </div>
+
+  <div id="tpl-status" class="muted" style="margin-bottom:8px">—</div>
+  <div id="tpl-list-tbl"><div class="muted">Loading…</div></div>
+
+  <div id="tpl-editor" hidden style="margin-top:14px">
+    <div class="row between" style="margin-bottom:6px">
+      <select id="tpl-file-select" style="min-width:200px"></select>
+      <div class="row" style="gap:6px">
+        <button id="tpl-file-reload">Reload</button>
+        <button id="tpl-file-save" class="primary">Save file</button>
+      </div>
+    </div>
+    <textarea id="tpl-file-body" rows="20" style="width:100%;font-family:ui-monospace,monospace;font-size:12px"></textarea>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Vouchers</h2>
+  <div class="row between" style="margin-bottom:12px;flex-wrap:wrap;gap:8px">
+    <div class="row" style="gap:8px;flex-wrap:wrap">
+      <label class="row" style="gap:6px;align-items:center">
+        <span class="muted" style="margin:0">Group:</span>
+        <select id="vch-group-filter"><option value="">(all groups)</option></select>
+      </label>
+      <label class="row" style="gap:6px;align-items:center">
+        <input type="checkbox" id="vch-include-used" checked> <span class="muted" style="margin:0">show used</span>
+      </label>
+      <button id="vch-refresh-btn">Refresh</button>
+      <button id="vch-export-btn">Export CSV</button>
+      <button id="vch-delete-group-btn" class="danger">Delete group</button>
+    </div>
+    <button id="vch-generate-btn" class="primary" onclick="openGenerateModal()">+ Generate batch</button>
+  </div>
+
+  <div id="vouchers-tbl"><div class="muted">Loading…</div></div>
+
+  <template id="vch-form-tpl">
+  <div>
+    <div class="grid cols-2">
+      <label class="field"><span>Count (1–5000)</span>
+        <input type="number" name="count" value="10" min="1" max="5000">
+      </label>
+      <label class="field"><span>Code length (4–32)</span>
+        <input type="number" name="length" value="8" min="4" max="32">
+      </label>
+      <label class="field"><span>Group name</span>
+        <input type="text" name="group_name" placeholder="e.g. summer-2026">
+      </label>
+      <label class="field"><span>Prefix (optional)</span>
+        <input type="text" name="prefix" placeholder="">
+      </label>
+      <label class="field"><span>Validity minutes</span>
+        <input type="number" name="validity_minutes" value="1440" min="1">
+      </label>
+      <label class="field"><span>Session timeout (s)</span>
+        <input type="number" name="session_timeout" value="3600" min="60">
+      </label>
+      <label class="field"><span>Max sessions per code</span>
+        <input type="number" name="max_sessions" value="1" min="1" max="1000">
+      </label>
+      <label class="field"><span>Upload limit (kbps, 0 = no limit)</span>
+        <input type="number" name="bandwidth_up_kbps" value="0" min="0" step="64">
+      </label>
+      <label class="field"><span>Download limit (kbps, 0 = no limit)</span>
+        <input type="number" name="bandwidth_down_kbps" value="0" min="0" step="64">
+      </label>
+      <label class="field"><span>Notes</span>
+        <input type="text" name="notes" placeholder="">
+      </label>
+    </div>
+  </div>
+</template>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let CFG = {};
+
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function fmtTs(t){
+  if (!t) return '';
+  const d = new Date(t * 1000);
+  const diff = (Date.now() - d.getTime()) / 1000;
+  if (diff < 60) return diff.toFixed(0) + 's ago';
+  if (diff < 3600) return (diff/60).toFixed(0) + 'm ago';
+  return (diff/3600).toFixed(0) + 'h ago';
+}
+function fmtDur(t){
+  if (!t) return '—';
+  const s = Math.max(0, t - Math.floor(Date.now()/1000));
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s/60) + 'm';
+  return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
+}
+
+function fmtBytes(n){
+  n = Number(n) || 0;
+  if (n < 1024) return n + ' B';
+  if (n < 1024*1024) return (n/1024).toFixed(1) + ' KiB';
+  if (n < 1024*1024*1024) return (n/1024/1024).toFixed(1) + ' MiB';
+  return (n/1024/1024/1024).toFixed(2) + ' GiB';
+}
+
+function fmtRate(bps){
+  bps = Number(bps) || 0;
+  if (bps < 1000) return bps + ' bps';
+  if (bps < 1000*1000) return (bps/1000).toFixed(1) + ' kbps';
+  if (bps < 1000*1000*1000) return (bps/1000/1000).toFixed(1) + ' Mbps';
+  return (bps/1000/1000/1000).toFixed(2) + ' Gbps';
+}
+
+async function load() {
+  try {
+    const r = await nfw.api.get('/api/services/captiveportal');
+    CFG = r.config || {};
+    const b = CFG.branding || {};
+    document.getElementById('enabled').checked = !!CFG.enabled;
+    document.getElementById('interface').value = CFG.interface || 'lan';
+    document.getElementById('portal_port').value = CFG.portal_port || 8081;
+    document.getElementById('gateway_name').value = CFG.gateway_name || '';
+    document.getElementById('welcome_text').value = b.welcome_text || '';
+    document.getElementById('session_timeout').value = CFG.session_timeout || 3600;
+    document.getElementById('idle_timeout').value = CFG.idle_timeout || 600;
+    document.getElementById('tos_required').checked = !!CFG.tos_required;
+    document.getElementById('tos_text').value = CFG.tos_text || '';
+    document.getElementById('walled_garden').value = (CFG.walled_garden || []).join('\n');
+
+    // 9.18b2 fields
+    document.getElementById('auth_mode').value = CFG.auth_mode || 'multi';
+    document.getElementById('splash_label').value = CFG.splash_label || 'Connect';
+    document.getElementById('splash_extra_text').value = CFG.splash_extra_text || '';
+    document.getElementById('hard_timeout').value = CFG.hard_timeout || 0;
+    document.getElementById('welcome_back').value = CFG.welcome_back || 0;
+    document.getElementById('concurrent_logins').value = CFG.concurrent_logins || 0;
+    document.getElementById('concurrent_mode').value = CFG.concurrent_mode || 'deny_new';
+    document.getElementById('default_bandwidth_up_kbps').value = CFG.default_bandwidth_up_kbps || 0;
+    document.getElementById('default_bandwidth_down_kbps').value = CFG.default_bandwidth_down_kbps || 0;
+    _syncSplashVisibility();
+    const backends = new Set(CFG.auth_backends || ['local','ldap']);
+    document.querySelectorAll('input.backend').forEach(el => el.checked = backends.has(el.value));
+    loadStatus();
+    loadSessions();
+    loadBypass();
+    loadKicks();
+  } catch (e) { nfw.toast.err(e.message); }
+}
+
+async function loadStatus() {
+  try {
+    const s = await nfw.api.get('/api/services/captiveportal/status');
+    const txt = [
+      'service:   ' + (s.service || 'unknown'),
+      'enabled:   ' + s.enabled,
+      'interface: ' + s.interface,
+      'port:      ' + s.portal_port,
+      '',
+      'sessions (DB):       ' + (s.sessions_count ?? '?'),
+      'nft authenticated:   ' + (s.nft_authenticated_count ?? '?'),
+      '  sample: ' + JSON.stringify(s.nft_authenticated_sample || []),
+    ].join('\n');
+    document.getElementById('status').textContent = txt;
+  } catch (e) {
+    document.getElementById('status').textContent = 'error: ' + e.message;
+  }
+}
+
+async function loadSessions() {
+  const el = document.getElementById('sessions-tbl');
+  const kind = document.getElementById('sess-filter-kind').value || 'all';
+  const q = document.getElementById('sess-search').value.trim();
+  const countEl = document.getElementById('sess-count');
+  try {
+    let url = '/api/services/captiveportal/sessions?kind=' + encodeURIComponent(kind);
+    if (q) url += '&q=' + encodeURIComponent(q);
+    const r = await nfw.api.get(url);
+    const sessions = r.sessions || [];
+    countEl.textContent = sessions.length + ' shown';
+
+    if (!sessions.length) {
+      el.innerHTML = '<div class="muted">No sessions</div>';
+      return;
+    }
+
+    const kindLabel = (s) => {
+      const k = s.kind || 'auth';
+      const map = {
+        auth:            ['Authenticated', 'ok'],
+        voucher:         ['Voucher', 'info'],
+        splash:          ['Splash', 'info'],
+        bypass:          ['Bypassed', 'warn'],
+        unauthenticated: ['Not signed in', 'warn'],
+      };
+      const [label, cls] = map[k] || [k, 'info'];
+      return '<span class="badge ' + cls + '">' + esc(label) + '</span>';
+    };
+
+    const statusLabel = (s) => {
+      const st = s.status || 'authenticated';
+      const map = {
+        authenticated: ['active',  'ok'],
+        pending:       ['pending', 'warn'],
+        revoked:       ['revoked', ''],
+      };
+      const [label, cls] = map[st] || [st, ''];
+      return '<span class="badge ' + cls + '">' + esc(label) + '</span>';
+    };
+
+    const rows = sessions.map(s => {
+      const isUnauth = s.kind === 'unauthenticated';
+      const kickLabel = (s.kind === 'bypass') ? 'Kick 1h' : 'Kick';
+      const ua = (s.user_agent || '').slice(0, 40);
+      const inB  = s.bytes_in  || 0;
+      const outB = s.bytes_out || 0;
+      const inR  = s.bw_in_bps  || 0;
+      const outR = s.bw_out_bps || 0;
+      const kickCell = isUnauth
+        ? '<span class="muted">\u2014</span>'
+        : '<button class="small danger" data-kick="' + esc(s.ip) + '" data-kind="' + esc(s.kind) + '">' + kickLabel + '</button>';
+      const rateCell = isUnauth ? '\u2014' : (fmtRate(inR) + ' / ' + fmtRate(outR));
+      return `
+      <tr>
+        <td class="mono">${esc(s.ip)}</td>
+        <td class="mono">${esc(s.mac || '\u2014')}</td>
+        <td class="mono">${esc(s.username || '\u2014')}</td>
+        <td>${kindLabel(s)}</td>
+        <td>${statusLabel(s)}</td>
+        <td class="mono" title="down / up">${fmtBytes(inB)} / ${fmtBytes(outB)}</td>
+        <td class="mono" title="live down / up">${rateCell}</td>
+        <td>${s.started_at ? fmtTs(s.started_at) : '\u2014'}</td>
+        <td>${fmtTs(s.last_seen_at)}</td>
+        <td>${s.expires_at ? fmtDur(s.expires_at) : '\u2014'}</td>
+        <td>${kickCell}</td>
+      </tr>`;
+    }).join('');
+
+    el.innerHTML = '<table class="data"><thead><tr>'
+      + '<th>IP</th><th>MAC</th><th>User</th><th>Kind</th><th>Status</th>'
+      + '<th>Bytes &darr;/&uarr;</th><th>Rate &darr;/&uarr;</th>'
+      + '<th>Started</th><th>Last seen</th><th>Expires in</th><th></th>'
+      + '</tr></thead><tbody>' + rows + '</tbody></table>';
+
+    el.querySelectorAll('[data-kick]').forEach(b => b.addEventListener('click', async () => {
+      const ip = b.getAttribute('data-kick');
+      const kind = b.getAttribute('data-kind');
+            let msg;
+      if (kind === 'bypass') {
+        msg = 'Un-bypass this MAC for 1 hour? The device will be redirected to the portal on its next HTTP request.';
+      } else {
+        msg = 'Kick session for ' + ip + '?';
+      }
+      if (!confirm(msg)) return;
+      b.disabled = true; b.textContent = '…';
+      try {
+        const r = await nfw.api.post(
+          '/api/services/captiveportal/sessions/' + encodeURIComponent(ip) + '/kick',
+          {ttl: 3600}
+        );
+        if (r.kind === 'mac_bypass') {
+          nfw.toast.ok('Un-bypassed MAC ' + r.mac + ' for ' + (r.ttl_s/60|0) + 'm');
+        } else {
+          nfw.toast.ok('Kicked ' + ip);
+        }
+        loadSessions(); loadStatus(); loadBypass();
+      } catch (e) {
+        nfw.toast.err(e.message);
+        b.disabled = false; b.textContent = (kind === 'bypass') ? 'Kick 1h' : 'Kick';
+      }
+    }));
+  } catch (e) {
+    el.innerHTML = '<div class="muted">error: ' + esc(e.message) + '</div>';
+  }
+}
+
+
+// Auto-refresh: 5-second interval when enabled
+let _sessAutorefreshTimer = null;
+function _sessToggleAutorefresh(on) {
+  if (_sessAutorefreshTimer) {
+    clearInterval(_sessAutorefreshTimer);
+    _sessAutorefreshTimer = null;
+  }
+  if (on) {
+    _sessAutorefreshTimer = setInterval(() => {
+      loadSessions();
+      loadStatus();
+    }, 5000);
+  }
+}
+
+
+// Kick list viewer (for the Bypass card)
+async function loadKicks() {
+  const el = document.getElementById('kicks-tbl');
+  if (!el) return;
+  try {
+    const r = await nfw.api.get('/api/services/captiveportal/bypass/kicks');
+    const kicks = r.kicks || [];
+    if (!kicks.length) {
+      el.innerHTML = '<div class="muted">No temporary un-bypasses active</div>';
+      return;
+    }
+    const now = Math.floor(Date.now() / 1000);
+    const rows = kicks.map(k => {
+      const left = Math.max(0, k.kicked_until - now);
+      const mins = Math.floor(left / 60);
+      return `<tr>
+        <td class="mono">${esc(k.mac)}</td>
+        <td>${esc(k.reason || '')}</td>
+        <td>${mins}m left</td>
+        <td><button class="small" data-unkick="${esc(k.mac)}">Restore bypass</button></td>
+      </tr>`;
+    }).join('');
+    el.innerHTML = '<table class="data"><thead><tr>'
+      + '<th>MAC</th><th>Reason</th><th>Expires in</th><th></th>'
+      + '</tr></thead><tbody>' + rows + '</tbody></table>';
+    el.querySelectorAll('[data-unkick]').forEach(b => b.addEventListener('click', async () => {
+      const mac = b.getAttribute('data-unkick');
+      b.disabled = true;
+      try {
+        await nfw.api.post('/api/services/captiveportal/sessions/unkick', {mac});
+        nfw.toast.ok('Restored ' + mac);
+        loadKicks(); loadSessions(); loadBypass();
+      } catch (e) { nfw.toast.err(e.message); b.disabled = false; }
+    }));
+  } catch (e) { /* silent */ }
+}
+
+
+// ---------------------------------------------------------------------------
+// Vouchers
+// ---------------------------------------------------------------------------
+let VOUCHERS = [];
+let VOUCHER_GROUPS = [];
+
+function _vchGid(id) { return document.getElementById(id); }
+
+async function loadVoucherGroups() {
+  try {
+    const r = await nfw.api.get('/api/services/captiveportal/vouchers/groups');
+    VOUCHER_GROUPS = r.groups || [];
+    const sel = _vchGid('vch-group-filter');
+    if (!sel) return;
+    const current = sel.value;
+    sel.innerHTML = '<option value="">(all groups)</option>' +
+      VOUCHER_GROUPS.map(g => {
+        const label = (g.group_name || '(no group)') + ' — ' + g.n + ' total, ' + g.unused + ' unused';
+        return '<option value="' + esc(g.group_name) + '">' + esc(label) + '</option>';
+      }).join('');
+    if (current) sel.value = current;
+  } catch (e) { console.warn('loadVoucherGroups', e); }
+}
+
+async function loadVouchers() {
+  const el = _vchGid('vouchers-tbl');
+  if (!el) return;
+  const group = (_vchGid('vch-group-filter') || {}).value || '';
+  const includeUsed = (_vchGid('vch-include-used') || {}).checked;
+  try {
+    let url = '/api/services/captiveportal/vouchers?include_used=' + (includeUsed ? 'true' : 'false');
+    if (group) url += '&group_name=' + encodeURIComponent(group);
+    const r = await nfw.api.get(url);
+    VOUCHERS = r.vouchers || [];
+    if (!VOUCHERS.length) { el.innerHTML = '<div class="muted">No vouchers</div>'; return; }
+    const now = Math.floor(Date.now()/1000);
+    const rows = VOUCHERS.map(v => {
+      const used = v.session_count >= v.max_sessions;
+      const expired = v.expires_at && now >= v.expires_at;
+      let state;
+      if (!v.enabled) state = '<span class="badge danger">disabled</span>';
+      else if (used) state = '<span class="badge">used</span>';
+      else if (expired) state = '<span class="badge danger">expired</span>';
+      else state = '<span class="badge ok">unused</span>';
+      const expires = v.expires_at ? new Date(v.expires_at*1000).toISOString().slice(0,10) : '—';
+      return '<tr>'
+        + '<td class="mono">' + esc(v.code) + '</td>'
+        + '<td>' + esc(v.group_name || '') + '</td>'
+        + '<td class="mono">' + v.session_count + '/' + v.max_sessions + '</td>'
+        + '<td>' + v.validity_minutes + 'm</td>'
+        + '<td>' + expires + '</td>'
+        + '<td>' + state + '</td>'
+        + '<td>'
+          + '<button class="small" data-vch-toggle="' + v.id + '" data-vch-enabled="' + (v.enabled?1:0) + '">'
+            + (v.enabled ? 'Disable' : 'Enable') + '</button> '
+          + '<button class="small danger" data-vch-del="' + v.id + '">Del</button>'
+        + '</td>'
+        + '</tr>';
+    }).join('');
+    el.innerHTML = '<table class="data"><thead><tr>'
+      + '<th>Code</th><th>Group</th><th>Used</th><th>Validity</th>'
+      + '<th>Expires</th><th>State</th><th></th>'
+      + '</tr></thead><tbody>' + rows + '</tbody></table>';
+
+    el.querySelectorAll('[data-vch-del]').forEach(b => {
+      b.addEventListener('click', async () => {
+        const id = b.getAttribute('data-vch-del');
+        if (!confirm('Delete voucher id ' + id + '?')) return;
+        try {
+          await nfw.api.del('/api/services/captiveportal/vouchers/' + id);
+          nfw.toast.ok('Deleted');
+          loadVouchers(); loadVoucherGroups();
+        } catch (e) { nfw.toast.err(e.message); }
+      });
+    });
+    el.querySelectorAll('[data-vch-toggle]').forEach(b => {
+      b.addEventListener('click', async () => {
+        const id = b.getAttribute('data-vch-toggle');
+        const enable = b.getAttribute('data-vch-enabled') !== '1';
+        try {
+          await nfw.api.post('/api/services/captiveportal/vouchers/' + id + '/enable', {enabled: enable});
+          loadVouchers(); loadVoucherGroups();
+        } catch (e) { nfw.toast.err(e.message); }
+      });
+    });
+  } catch (e) {
+    el.innerHTML = '<div class="muted">error: ' + esc(e.message) + '</div>';
+  }
+}
+
+function openGenerateModal() {
+  const tpl = _vchGid('vch-form-tpl');
+  if (!tpl) { nfw.toast.err('form template missing'); return; }
+  const div = document.createElement('div');
+  div.innerHTML = tpl.innerHTML;
+
+  function collect() {
+    const g = (n) => div.querySelector('[name=' + n + ']');
+    return {
+      count: parseInt(g('count').value, 10) || 10,
+      length: parseInt(g('length').value, 10) || 8,
+      group_name: g('group_name').value.trim(),
+      prefix: g('prefix').value.trim(),
+      validity_minutes: parseInt(g('validity_minutes').value, 10) || 1440,
+      session_timeout: parseInt(g('session_timeout').value, 10) || 3600,
+      max_sessions: parseInt(g('max_sessions').value, 10) || 1,
+      bandwidth_up_kbps: parseInt(g('bandwidth_up_kbps').value, 10) || 0,
+      bandwidth_down_kbps: parseInt(g('bandwidth_down_kbps').value, 10) || 0,
+      notes: g('notes').value.trim(),
+    };
+  }
+
+  nfw.modal.open({
+    title: 'Generate voucher batch',
+    body: div,
+    actions: [
+      {
+        label: 'Cancel',
+        onClick: function (ev, close) {
+          try { close(); } catch (_) {}
+          document.querySelectorAll('.modal-bg').forEach(function (el) { el.remove(); });
+        }
+      },
+      {
+        label: 'Generate',
+        className: 'primary',
+        onClick: async function (ev, close) {
+          const payload = collect();
+          if (payload.count < 1 || payload.count > 5000) {
+            nfw.toast.err('count must be 1..5000');
+            return;
+          }
+          try {
+            const r = await nfw.api.post('/api/services/captiveportal/vouchers/generate', payload);
+            nfw.toast.ok('Generated ' + (r.created || 0) + ' voucher(s)');
+            // Belt and braces: call the framework's close, AND remove any
+            // lingering modal-bg nodes directly. Some flows in the framework
+            // don't propagate `close` correctly; the direct removal always works.
+            try { close(); } catch (_) {}
+            document.querySelectorAll('.modal-bg').forEach(function (el) { el.remove(); });
+            loadVouchers();
+            loadVoucherGroups();
+          } catch (e) {
+            nfw.toast.err(e.message);
+          }
+        }
+      }
+    ]
+  });
+}
+
+async function exportVoucherCsv() {
+  const group = (_vchGid('vch-group-filter') || {}).value || '';
+  let url = '/api/services/captiveportal/vouchers/export?include_used=true';
+  if (group) url += '&group_name=' + encodeURIComponent(group);
+  window.location.href = url;
+}
+
+async function deleteVoucherGroup() {
+  const group = (_vchGid('vch-group-filter') || {}).value || '';
+  if (!group) { nfw.toast.err('Select a group first'); return; }
+  if (!confirm('Delete ALL vouchers in group "' + group + '"?')) return;
+  try {
+    const r = await nfw.api.post('/api/services/captiveportal/vouchers/delete-group', {group_name: group});
+    nfw.toast.ok('Deleted ' + (r.deleted||0) + ' voucher(s)');
+    _vchGid('vch-group-filter').value = '';
+    loadVouchers(); loadVoucherGroups();
+  } catch (e) { nfw.toast.err(e.message); }
+}
+
+// ---------------------------------------------------------------------------
+// Bypass (9.18b3)
+// ---------------------------------------------------------------------------
+async function loadBypass() {
+  try {
+    const r = await nfw.api.get('/api/services/captiveportal/bypass');
+    const c = r || {};
+    document.getElementById('bypass_macs').value =
+      (c.configured_macs || []).join('\n');
+    document.getElementById('bypass_hostnames').value =
+      (c.configured_hostnames || []).join('\n');
+    document.getElementById('bypass_refresh_seconds').value =
+      c.refresh_seconds || 120;
+    document.getElementById('bypass-refresh-secs').textContent =
+      c.refresh_seconds || 120;
+    renderBypassCache(c.cache || {}, c.current_mac_ips || [], c.current_hostname_ips || []);
+  } catch (e) {
+    console.warn('loadBypass:', e);
+  }
+}
+
+function renderBypassCache(meta, macIps, hostIps) {
+  const el = document.getElementById('bypass-cache');
+  if (!el) return;
+  const ts = meta.resolved_at
+    ? new Date(meta.resolved_at * 1000).toISOString().replace('T', ' ').slice(0, 19) + 'Z'
+    : '(never)';
+  const lines = [
+    'last refresh:        ' + ts,
+    'configured MACs:     ' + (meta.macs_configured || 0),
+    'resolved MAC→IPs:    ' + (meta.macs_resolved || 0),
+    'configured hostnames: ' + (meta.hostnames_configured || 0),
+    'resolved hostnames:   ' + (meta.hostnames_resolved || 0),
+    '',
+    'MAC-bypass IPs in nft set (' + macIps.length + '):',
+    '  ' + (macIps.join(', ') || '(none)'),
+    '',
+    'Hostname IPs merged into walled_garden_v4 (' + hostIps.length + '):',
+    '  ' + (hostIps.join(', ') || '(none)'),
+  ];
+  if (meta.error) {
+    lines.push('', 'error: ' + meta.error);
+  }
+  el.textContent = lines.join('\n');
+}
+
+async function refreshBypassNow() {
+  const btn = document.getElementById('bypass-refresh-btn');
+  btn.disabled = true; btn.textContent = 'Refreshing…';
+  try {
+    const r = await nfw.api.post('/api/services/captiveportal/bypass/refresh');
+    if (r.firewall_applied) {
+      nfw.toast.ok('Caches refreshed, firewall reapplied');
+    } else if (r.changed) {
+      nfw.toast.ok('Caches refreshed');
+    } else {
+      nfw.toast.ok('No change — caches already up to date');
+    }
+    loadBypass();
+  } catch (e) {
+    nfw.toast.err(e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Refresh caches now';
+  }
+}
+
+function _syncSplashVisibility() {
+  const mode = document.getElementById('auth_mode').value;
+  document.getElementById('splash-fields').style.display =
+    (mode === 'splash') ? 'block' : 'none';
+}
+
+
+function collectBackends() {
+  const out = [];
+  document.querySelectorAll('input.backend').forEach(el => { if (el.checked) out.push(el.value); });
+  return out;
+}
+
+
+// ---------------------------------------------------------------------------
+// Custom templates (9.18b4)
+// ---------------------------------------------------------------------------
+let TEMPLATES = [];
+let CURRENT_TEMPLATE = null;   // full config's currently-selected template_id
+
+async function loadTemplates() {
+  const el = document.getElementById('tpl-list-tbl');
+  const statusEl = document.getElementById('tpl-status');
+  try {
+    const r = await nfw.api.get('/api/services/captiveportal/templates');
+    TEMPLATES = r.templates || [];
+    // Also grab current config to know which is active
+    const c = await nfw.api.get('/api/services/captiveportal');
+    CURRENT_TEMPLATE = (c.config || {}).template_id || '';
+    statusEl.textContent = 'active: ' + (CURRENT_TEMPLATE || 'default (built-in)');
+
+    if (!TEMPLATES.length) {
+      el.innerHTML = '<div class="muted">No custom templates uploaded</div>';
+      return;
+    }
+    const rows = TEMPLATES.map(t => {
+      const active = t.id === CURRENT_TEMPLATE;
+      const files = (t.file_list || []).join(', ');
+      return `<tr>
+        <td class="mono">${esc(t.id)}</td>
+        <td>${esc(t.name || '')}</td>
+        <td>${t.files || 0}</td>
+        <td>${(t.size/1024).toFixed(1)} KB</td>
+        <td class="mono" style="font-size:11px">${esc(files)}</td>
+        <td>${active ? '<span class="badge ok">active</span>' : ''}</td>
+        <td style="white-space:nowrap">
+          <button class="small" data-tpl-edit="${esc(t.id)}">Edit</button>
+          <button class="small" data-tpl-use="${esc(t.id)}" ${active ? 'disabled' : ''}>Use</button>
+          <button class="small danger" data-tpl-del="${esc(t.id)}">Del</button>
+        </td>
+      </tr>`;
+    }).join('');
+    el.innerHTML = '<table class="data"><thead><tr>'
+      + '<th>ID</th><th>Name</th><th>Files</th><th>Size</th><th>Contents</th><th></th><th></th>'
+      + '</tr></thead><tbody>' + rows + '</tbody></table>';
+
+    el.querySelectorAll('[data-tpl-edit]').forEach(b => b.onclick = () => openTemplateEditor(b.getAttribute('data-tpl-edit')));
+    el.querySelectorAll('[data-tpl-use]').forEach(b => b.onclick = () => useTemplate(b.getAttribute('data-tpl-use')));
+    el.querySelectorAll('[data-tpl-del]').forEach(b => b.onclick = async () => {
+      const id = b.getAttribute('data-tpl-del');
+      if (!confirm('Delete template ' + id + '? If active, will fall back to default.')) return;
+      try {
+        await nfw.api.del('/api/services/captiveportal/templates/' + encodeURIComponent(id));
+        nfw.toast.ok('Deleted');
+        loadTemplates();
+      } catch (e) { nfw.toast.err(e.message); }
+    });
+  } catch (e) {
+    el.innerHTML = '<div class="muted">error: ' + esc(e.message) + '</div>';
+  }
+}
+
+async function uploadTemplateFile(file) {
+  if (!file) return;
+  if (file.size > 5 * 1024 * 1024) { nfw.toast.err('File > 5 MB'); return; }
+  const reader = new FileReader();
+  reader.onload = async () => {
+    // reader.result is a data URL: data:application/zip;base64,XXX
+    const comma = reader.result.indexOf(',');
+    const b64 = comma >= 0 ? reader.result.substring(comma + 1) : reader.result;
+    const name = prompt('Template name:', file.name.replace(/\.zip$/i, ''));
+    if (name === null) return;
+    try {
+      await nfw.api.post('/api/services/captiveportal/templates/upload',
+                         {zip_b64: b64, name: name});
+      nfw.toast.ok('Uploaded');
+      loadTemplates();
+    } catch (e) { nfw.toast.err(e.message); }
+  };
+  reader.readAsDataURL(file);
+}
+
+async function openTemplateEditor(tid) {
+  const editor = document.getElementById('tpl-editor');
+  const select = document.getElementById('tpl-file-select');
+  try {
+    const r = await nfw.api.get('/api/services/captiveportal/templates/' + encodeURIComponent(tid) + '/files');
+    const files = r.files || [];
+    select.innerHTML = files
+      .filter(f => /\.(html|htm|css|js|txt|md|json|svg)$/i.test(f.path))
+      .map(f => `<option value="${esc(f.path)}">${esc(f.path)} (${f.size} B)</option>`)
+      .join('');
+    if (!select.options.length) {
+      nfw.toast.err('No editable text files in this template');
+      return;
+    }
+    editor.hidden = false;
+    editor.dataset.tid = tid;
+    await loadTemplateFile();
+  } catch (e) { nfw.toast.err(e.message); }
+}
+
+async function loadTemplateFile() {
+  const editor = document.getElementById('tpl-editor');
+  const tid = editor.dataset.tid;
+  const path = document.getElementById('tpl-file-select').value;
+  if (!tid || !path) return;
+  try {
+    const r = await nfw.api.get('/api/services/captiveportal/templates/' +
+        encodeURIComponent(tid) + '/file?path=' + encodeURIComponent(path));
+    document.getElementById('tpl-file-body').value = r.content || '';
+  } catch (e) { nfw.toast.err(e.message); }
+}
+
+async function saveTemplateFile() {
+  const editor = document.getElementById('tpl-editor');
+  const tid = editor.dataset.tid;
+  const path = document.getElementById('tpl-file-select').value;
+  const content = document.getElementById('tpl-file-body').value;
+  if (!tid || !path) return;
+  try {
+    await nfw.api.put('/api/services/captiveportal/templates/' +
+        encodeURIComponent(tid) + '/file',
+        {path: path, content: content});
+    nfw.toast.ok('Saved');
+    loadTemplates();
+  } catch (e) { nfw.toast.err(e.message); }
+}
+
+async function useTemplate(tid) {
+  // Read current config, set template_id, PUT it back
+  try {
+    const r = await nfw.api.get('/api/services/captiveportal');
+    const cfg = r.config || {};
+    cfg.template_id = tid;
+    await nfw.api.put('/api/services/captiveportal', {config: cfg});
+    await nfw.api.post('/api/services/captiveportal/apply');
+    nfw.toast.ok('Template activated');
+    loadTemplates();
+  } catch (e) { nfw.toast.err(e.message); }
+}
+
+async function clearTemplate() {
+  try {
+    const r = await nfw.api.get('/api/services/captiveportal');
+    const cfg = r.config || {};
+    cfg.template_id = '';
+    await nfw.api.put('/api/services/captiveportal', {config: cfg});
+    await nfw.api.post('/api/services/captiveportal/apply');
+    nfw.toast.ok('Reverted to built-in template');
+    loadTemplates();
+  } catch (e) { nfw.toast.err(e.message); }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  load();
+  loadVoucherGroups();
+  loadVouchers();
+  document.getElementById('refresh-btn').onclick = load;
+  const am = document.getElementById('auth_mode');
+  if (am) am.addEventListener('change', _syncSplashVisibility);
+  const br = document.getElementById('bypass-refresh-btn');
+  if (br) br.addEventListener('click', refreshBypassNow);
+  const bl = document.getElementById('bypass-reload-btn');
+  if (bl) bl.addEventListener('click', () => { loadBypass(); loadKicks(); });
+
+  // Session filter controls
+  const fk = document.getElementById('sess-filter-kind');
+  if (fk) fk.addEventListener('change', loadSessions);
+  const ss = document.getElementById('sess-search');
+  if (ss) {
+    let _t = null;
+    ss.addEventListener('input', () => {
+      clearTimeout(_t);
+      _t = setTimeout(loadSessions, 250);
+    });
+  }
+  const ar = document.getElementById('sess-autorefresh');
+  if (ar) {
+    ar.addEventListener('change', () => _sessToggleAutorefresh(ar.checked));
+    if (ar.checked) _sessToggleAutorefresh(true);
+  }
+
+  // Template manager wiring
+  const dl = document.getElementById('tpl-download-starter');
+  if (dl) dl.addEventListener('click', () => {
+    window.location.href = '/api/services/captiveportal/templates/download/starter';
+  });
+  const fi = document.getElementById('tpl-file-input');
+  if (fi) fi.addEventListener('change', (e) => {
+    if (e.target.files && e.target.files[0]) uploadTemplateFile(e.target.files[0]);
+    e.target.value = '';
+  });
+  const tr = document.getElementById('tpl-refresh');
+  if (tr) tr.addEventListener('click', loadTemplates);
+  const ae = document.getElementById('tpl-active-enabled');
+  if (ae) ae.addEventListener('change', () => {
+    if (ae.checked) return;      // handled by "Use" buttons
+    clearTemplate();
+  });
+  const fs = document.getElementById('tpl-file-select');
+  if (fs) fs.addEventListener('change', loadTemplateFile);
+  const fr = document.getElementById('tpl-file-reload');
+  if (fr) fr.addEventListener('click', loadTemplateFile);
+  const fsv = document.getElementById('tpl-file-save');
+  if (fsv) fsv.addEventListener('click', saveTemplateFile);
+
+  // Initial load
+  loadTemplates();
+
+  // Initial kicks load
+  loadKicks();
+  document.getElementById('refresh-sessions-btn').onclick = () => { loadSessions(); loadStatus(); };
+  const _bind = (id, fn) => { const el = _vchGid(id); if (el) el.addEventListener('click', fn); };
+  _bind('vch-refresh-btn', () => { loadVouchers(); loadVoucherGroups(); });
+  _bind('vch-export-btn', exportVoucherCsv);
+  _bind('vch-delete-group-btn', deleteVoucherGroup);
+  _bind('vch-generate-btn', openGenerateModal);
+  const gf = _vchGid('vch-group-filter'); if (gf) gf.addEventListener('change', loadVouchers);
+  const iu = _vchGid('vch-include-used'); if (iu) iu.addEventListener('change', loadVouchers);
+  document.getElementById('prune-btn').onclick = async () => {
+    try {
+      const r = await nfw.api.post('/api/services/captiveportal/prune');
+      nfw.toast.ok('Pruned ' + (r.count || 0) + ' session(s)');
+      loadSessions(); loadStatus();
+    } catch (e) { nfw.toast.err(e.message); }
+  };
+
+  document.getElementById('save-btn').onclick = async () => {
+    const backends = collectBackends();
+    if (!backends.length) { nfw.toast.err('Select at least one auth backend'); return; }
+    const config = {
+      enabled: document.getElementById('enabled').checked,
+      interface: 'lan',
+      portal_port: parseInt(document.getElementById('portal_port').value, 10) || 8081,
+      gateway_name: document.getElementById('gateway_name').value || 'NFW Captive Portal',
+      session_timeout: parseInt(document.getElementById('session_timeout').value, 10) || 3600,
+      idle_timeout: parseInt(document.getElementById('idle_timeout').value, 10) || 600,
+      auth_backends: backends,
+      tos_required: document.getElementById('tos_required').checked,
+      tos_text: document.getElementById('tos_text').value,
+      walled_garden: document.getElementById('walled_garden').value
+        .split('\n').map(s => s.trim()).filter(Boolean),
+      branding: {
+        welcome_text: document.getElementById('welcome_text').value || '',
+        primary_color: (CFG.branding || {}).primary_color || '#58a6ff',
+        logo_url: (CFG.branding || {}).logo_url || '',
+      },
+      // 9.18b2
+      auth_mode: document.getElementById('auth_mode').value || 'multi',
+      splash_label: document.getElementById('splash_label').value || 'Connect',
+      splash_extra_text: document.getElementById('splash_extra_text').value || '',
+      hard_timeout: parseInt(document.getElementById('hard_timeout').value, 10) || 0,
+      welcome_back: parseInt(document.getElementById('welcome_back').value, 10) || 0,
+      concurrent_logins: parseInt(document.getElementById('concurrent_logins').value, 10) || 0,
+      concurrent_mode: document.getElementById('concurrent_mode').value || 'deny_new',
+      default_bandwidth_up_kbps: parseInt(document.getElementById('default_bandwidth_up_kbps').value, 10) || 0,
+      default_bandwidth_down_kbps: parseInt(document.getElementById('default_bandwidth_down_kbps').value, 10) || 0,
+      // 9.18b3
+      bypass_macs: document.getElementById('bypass_macs').value
+        .split('\n').map(s => s.trim().toUpperCase()).filter(Boolean),
+      bypass_hostnames: document.getElementById('bypass_hostnames').value
+        .split('\n').map(s => s.trim().toLowerCase()).filter(Boolean),
+      bypass_refresh_seconds: parseInt(document.getElementById('bypass_refresh_seconds').value, 10) || 120,
+    };
+    try {
+      await nfw.api.put('/api/services/captiveportal', {config});
+      const r = await nfw.api.post('/api/services/captiveportal/apply');
+      nfw.toast.ok('Captive portal applied');
+      setTimeout(load, 600);
+    } catch (e) { nfw.toast.err(e.message); }
+  };
+});
+</script>
+{% endblock %}

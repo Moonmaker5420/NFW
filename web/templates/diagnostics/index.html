@@ -1,0 +1,321 @@
+{% extends "base.html" %}
+{% block title %}Diagnostics{% endblock %}
+{% block content %}
+<h1>Diagnostics</h1>
+<p class="subtitle">Network utilities and packet capture</p>
+
+<div class="row" style="gap:8px;margin-bottom:16px;flex-wrap:wrap">
+  <button class="dtab primary" data-tab="net">Network Tools</button>
+  <button class="dtab" data-tab="arp">ARP / NDP</button>
+  <button class="dtab" data-tab="pcap">Packet Capture</button>
+  <button class="dtab" data-tab="cmd">Commands</button>
+</div>
+
+<!-- ==================== NETWORK TOOLS ==================== -->
+<div id="tab-net" class="dpanel">
+  <div class="grid cols-2">
+    <div class="card">
+      <h2>Ping</h2>
+      <label class="field"><span>Target (host or IP)</span><input type="text" id="ping-target" placeholder="1.1.1.1"></label>
+      <div class="row" style="gap:6px">
+        <label class="field" style="flex:1"><span>Count</span><input type="number" id="ping-count" value="4" min="1" max="20"></label>
+        <label class="field" style="flex:1"><span>Family</span>
+          <select id="ping-family"><option value="auto">auto</option><option value="ipv4">IPv4</option><option value="ipv6">IPv6</option></select>
+        </label>
+      </div>
+      <label class="field"><span>Source (optional — IP or interface)</span><input type="text" id="ping-source" placeholder=""></label>
+      <button id="ping-btn" class="primary">Run ping</button>
+    </div>
+
+    <div class="card">
+      <h2>Traceroute</h2>
+      <label class="field"><span>Target</span><input type="text" id="tr-target" placeholder="8.8.8.8"></label>
+      <div class="row" style="gap:6px">
+        <label class="field" style="flex:1"><span>Max hops</span><input type="number" id="tr-hops" value="20" min="1" max="30"></label>
+        <label class="field" style="flex:1"><span>Family</span>
+          <select id="tr-family"><option value="auto">auto</option><option value="ipv4">IPv4</option><option value="ipv6">IPv6</option></select>
+        </label>
+      </div>
+      <button id="tr-btn" class="primary">Run traceroute</button>
+      <p class="muted mt-2" style="font-size:12px">Traceroute runs from the firewall's routing table.</p>
+    </div>
+
+    <div class="card">
+      <h2>DNS lookup</h2>
+      <label class="field"><span>Name</span><input type="text" id="dns-query" placeholder="example.com"></label>
+      <div class="row" style="gap:6px">
+        <label class="field" style="flex:1"><span>Type</span>
+          <select id="dns-type">
+            <option>A</option><option>AAAA</option><option>CNAME</option><option>MX</option>
+            <option>NS</option><option>TXT</option><option>SOA</option><option>PTR</option>
+          </select>
+        </label>
+        <label class="field" style="flex:1"><span>Server (blank = system)</span><input type="text" id="dns-server" placeholder=""></label>
+      </div>
+      <button id="dns-btn" class="primary">Look up</button>
+    </div>
+
+    <div class="card">
+      <h2>Port test</h2>
+      <label class="field"><span>Host</span><input type="text" id="pt-host" placeholder="1.1.1.1"></label>
+      <div class="row" style="gap:6px">
+        <label class="field" style="flex:1"><span>Port</span><input type="number" id="pt-port" value="443" min="1" max="65535"></label>
+        <label class="field" style="flex:1"><span>Proto</span>
+          <select id="pt-proto"><option value="tcp">TCP</option><option value="udp">UDP</option></select>
+        </label>
+      </div>
+      <button id="pt-btn" class="primary">Test port</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Output</h2>
+    <pre class="code" id="net-out" style="max-height:500px">—</pre>
+  </div>
+</div>
+
+<!-- ==================== ARP / NDP ==================== -->
+<div id="tab-arp" class="dpanel" style="display:none">
+  <div class="row between" style="margin-bottom:12px">
+    <span class="muted">Neighbor tables from the kernel</span>
+    <button id="arp-refresh">Refresh</button>
+  </div>
+  <div class="card">
+    <h2>IPv4 (ARP)</h2>
+    <div id="arp-tbl"><div class="muted">Loading…</div></div>
+  </div>
+  <div class="card">
+    <h2>IPv6 (NDP)</h2>
+    <div id="ndp-tbl"><div class="muted">Loading…</div></div>
+  </div>
+</div>
+
+<!-- ==================== PACKET CAPTURE ==================== -->
+<div id="tab-pcap" class="dpanel" style="display:none">
+  <div class="grid cols-2">
+    <div class="card">
+      <h2>Start capture</h2>
+      <label class="field"><span>Interface</span><input type="text" id="pcap-iface" value="enp1s0"></label>
+      <label class="field"><span>Filter (tcpdump syntax)</span><input type="text" id="pcap-filter" value="ip" placeholder="tcp port 443"></label>
+      <div class="row" style="gap:6px">
+        <label class="field" style="flex:1"><span>Max seconds</span><input type="number" id="pcap-sec" value="300" min="5" max="3600"></label>
+        <label class="field" style="flex:1"><span>Max size (MB)</span><input type="number" id="pcap-mb" value="100" min="1" max="500"></label>
+      </div>
+      <div class="row" style="gap:6px;margin-top:8px">
+        <button id="pcap-start" class="primary">Start</button>
+        <button id="pcap-stop" class="danger">Stop</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Status</h2>
+      <div id="pcap-status"><div class="muted">Loading…</div></div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Saved captures</h2>
+    <div id="pcap-list"><div class="muted">Loading…</div></div>
+  </div>
+</div>
+
+<!-- ==================== COMMANDS ====================== -->
+<div id="tab-cmd" class="dpanel" style="display:none">
+  <div class="card">
+    <h2>Restricted commands</h2>
+    <p class="muted" style="font-size:12px">Whitelisted, read-only, no arguments.</p>
+    <div class="row" style="gap:6px;flex-wrap:wrap">
+      <select id="cmd-select" style="flex:1;min-width:200px"></select>
+      <button id="cmd-run" class="primary">Run</button>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Output</h2>
+    <pre class="code" id="cmd-out" style="max-height:500px">—</pre>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function setOut(t){document.getElementById('net-out').textContent = t;}
+
+document.querySelectorAll('.dtab').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.dtab').forEach(x => x.classList.remove('primary'));
+  b.classList.add('primary');
+  document.querySelectorAll('.dpanel').forEach(p => p.style.display = 'none');
+  document.getElementById('tab-' + b.dataset.tab).style.display = '';
+  if (b.dataset.tab === 'arp') loadArp();
+  if (b.dataset.tab === 'pcap') loadPcap();
+  if (b.dataset.tab === 'cmd') loadCmds();
+}));
+
+// ---------- Ping / traceroute / dns / port ----------
+document.getElementById('ping-btn').onclick = async () => {
+  setOut('running ping…');
+  try {
+    const p = new URLSearchParams({
+      target: document.getElementById('ping-target').value.trim(),
+      count: document.getElementById('ping-count').value,
+      family: document.getElementById('ping-family').value,
+      source: document.getElementById('ping-source').value.trim(),
+    });
+    const r = await nfw.api.get('/api/diagnostics/ping?' + p);
+    setOut('$ ' + r.command + '\n\n' + (r.stdout || r.stderr || '(no output)'));
+  } catch (e) { setOut('error: ' + e.message); }
+};
+
+document.getElementById('tr-btn').onclick = async () => {
+  setOut('running traceroute…');
+  try {
+    const p = new URLSearchParams({
+      target: document.getElementById('tr-target').value.trim(),
+      max_hops: document.getElementById('tr-hops').value,
+      family: document.getElementById('tr-family').value,
+    });
+    const r = await nfw.api.get('/api/diagnostics/traceroute?' + p);
+    setOut('$ ' + r.command + '\n\n' + (r.stdout || r.stderr || '(no output)'));
+  } catch (e) { setOut('error: ' + e.message); }
+};
+
+document.getElementById('dns-btn').onclick = async () => {
+  setOut('resolving…');
+  try {
+    const p = new URLSearchParams({
+      query: document.getElementById('dns-query').value.trim(),
+      type: document.getElementById('dns-type').value,
+      server: document.getElementById('dns-server').value.trim(),
+    });
+    const r = await nfw.api.get('/api/diagnostics/dns?' + p);
+    setOut('$ ' + r.command + '\n\n' + (r.stdout || r.stderr || '(no output)'));
+  } catch (e) { setOut('error: ' + e.message); }
+};
+
+document.getElementById('pt-btn').onclick = async () => {
+  setOut('testing port…');
+  try {
+    const r = await nfw.api.post('/api/diagnostics/port-test', {
+      host: document.getElementById('pt-host').value.trim(),
+      port: parseInt(document.getElementById('pt-port').value),
+      proto: document.getElementById('pt-proto').value,
+    });
+    setOut('$ ' + r.command + '\n\n' +
+           (r.open ? 'OPEN' : 'closed / unreachable') +
+           `  (${r.elapsed_ms} ms)\n\n` +
+           (r.stdout || r.stderr || ''));
+  } catch (e) { setOut('error: ' + e.message); }
+};
+
+// ---------- ARP ----------
+async function loadArp() {
+  const render = (el, j) => {
+    try {
+      const rows = JSON.parse(j.raw || '[]');
+      if (!rows.length) { el.innerHTML = '<div class="muted">empty</div>'; return; }
+      const html = rows.map(n => `
+        <tr>
+          <td class="mono">${esc(n.dst)}</td>
+          <td class="mono">${esc(n.dev||'')}</td>
+          <td class="mono">${esc(n.lladdr||'')}</td>
+          <td>${esc(n.state||'')}</td>
+        </tr>`).join('');
+      el.innerHTML = '<table class="data"><thead><tr><th>Address</th><th>Dev</th><th>LLADDR</th><th>State</th></tr></thead><tbody>' + html + '</tbody></table>';
+    } catch (_) {
+      el.innerHTML = '<pre class="code">' + esc(j.raw || '(no data)') + '</pre>';
+    }
+  };
+  try { render(document.getElementById('arp-tbl'), await nfw.api.get('/api/diagnostics/arp')); } catch (e) { document.getElementById('arp-tbl').innerHTML = esc(e.message); }
+  try { render(document.getElementById('ndp-tbl'), await nfw.api.get('/api/diagnostics/ndp')); } catch (e) { document.getElementById('ndp-tbl').innerHTML = esc(e.message); }
+}
+document.getElementById('arp-refresh').onclick = loadArp;
+
+// ---------- PCAP ----------
+async function loadPcap() {
+  try {
+    const s = await nfw.api.get('/api/diagnostics/pcap/status');
+    const el = document.getElementById('pcap-status');
+    if (s.running) {
+      el.innerHTML = `<span class="badge ok">running</span>
+        <div class="mono mt-2" style="font-size:12px">
+          file: ${esc(s.name)}<br>iface: ${esc(s.iface)}<br>filter: ${esc(s.filter)}<br>pid: ${s.pid}<br>size: ${(s.size/1024).toFixed(1)} KB
+        </div>`;
+    } else {
+      el.innerHTML = '<span class="badge warn">not running</span>';
+    }
+  } catch (e) { document.getElementById('pcap-status').textContent = e.message; }
+
+  try {
+    const r = await nfw.api.get('/api/diagnostics/pcap/list');
+    const items = r.captures || [];
+    if (!items.length) {
+      document.getElementById('pcap-list').innerHTML = '<div class="muted">No captures yet</div>';
+      return;
+    }
+    const rows = items.map(c => `
+      <tr>
+        <td class="mono">${esc(c.name)}</td>
+        <td class="num">${(c.size/1024).toFixed(1)} KB</td>
+        <td>${new Date(c.mtime*1000).toLocaleString()}</td>
+        <td>
+          <a class="btn small" href="/api/diagnostics/pcap/download/${encodeURIComponent(c.name)}">Download</a>
+          <button class="small danger" data-pcap-del="${esc(c.name)}">Del</button>
+        </td>
+      </tr>`).join('');
+    document.getElementById('pcap-list').innerHTML =
+      '<table class="data"><thead><tr><th>Name</th><th>Size</th><th>When</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+    document.querySelectorAll('[data-pcap-del]').forEach(b => b.onclick = async () => {
+      if (!confirm('Delete capture?')) return;
+      try { await nfw.api.del('/api/diagnostics/pcap/' + encodeURIComponent(b.getAttribute('data-pcap-del'))); loadPcap(); }
+      catch (e) { nfw.toast.err(e.message); }
+    });
+  } catch (e) { document.getElementById('pcap-list').textContent = e.message; }
+}
+
+document.getElementById('pcap-start').onclick = async () => {
+  try {
+    await nfw.api.post('/api/diagnostics/pcap/start', {
+      interface: document.getElementById('pcap-iface').value.trim(),
+      filter: document.getElementById('pcap-filter').value.trim(),
+      max_seconds: parseInt(document.getElementById('pcap-sec').value),
+      max_mb: parseInt(document.getElementById('pcap-mb').value),
+    });
+    nfw.toast.ok('Capture started');
+    setTimeout(loadPcap, 500);
+  } catch (e) { nfw.toast.err(e.message); }
+};
+
+document.getElementById('pcap-stop').onclick = async () => {
+  try {
+    const r = await nfw.api.post('/api/diagnostics/pcap/stop');
+    if (r.stopped) nfw.toast.ok('Stopped (' + (r.name || '') + ')');
+    else nfw.toast.info('No capture running');
+    loadPcap();
+  } catch (e) { nfw.toast.err(e.message); }
+};
+
+// ---------- Restricted commands ----------
+async function loadCmds() {
+  try {
+    const r = await nfw.api.get('/api/diagnostics/commands');
+    const sel = document.getElementById('cmd-select');
+    if (sel.dataset.loaded === '1') return;
+    sel.innerHTML = (r.commands || []).map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+    sel.dataset.loaded = '1';
+  } catch (e) { nfw.toast.err(e.message); }
+}
+
+document.getElementById('cmd-run').onclick = async () => {
+  const name = document.getElementById('cmd-select').value;
+  document.getElementById('cmd-out').textContent = 'running…';
+  try {
+    const r = await nfw.api.post('/api/diagnostics/command', {name});
+    document.getElementById('cmd-out').textContent =
+      '$ ' + r.command + '\n\n' + (r.stdout || r.stderr || '(no output)');
+  } catch (e) { document.getElementById('cmd-out').textContent = 'error: ' + e.message; }
+};
+
+// Auto-refresh pcap status if the tab is active
+setInterval(() => {
+  if (document.getElementById('tab-pcap').style.display !== 'none') loadPcap();
+}, 5000);
+</script>
+{% endblock %}

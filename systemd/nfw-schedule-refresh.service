@@ -1,0 +1,8 @@
+[Unit]
+Description=Refresh NFW firewall for active schedules
+After=nfw-configd.service
+Requires=nfw-configd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nfw-schedule-refresh.sh

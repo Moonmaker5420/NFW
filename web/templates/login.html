@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Login — NFW</title>
+  <link rel="stylesheet" href="/static/css/theme.css">
+  <link rel="stylesheet" href="/static/css/layout.css">
+  <link rel="stylesheet" href="/static/css/components.css">
+</head>
+<body>
+<div class="login-wrap">
+  <form class="login-card" id="login-form" autocomplete="on">
+    <h1>NFW<span style="color:var(--accent)">.</span></h1>
+    <p class="sub">Sign in to the firewall console</p>
+    <div class="error" id="login-error"></div>
+    <label class="field">
+      <span>Username</span>
+      <input type="text" name="username" id="username" autocomplete="username" autofocus required>
+    </label>
+    <label class="field">
+      <span>Password</span>
+      <input type="password" name="password" id="password" autocomplete="current-password" required>
+    </label>
+    <button type="submit" class="primary" style="width:100%">Sign in</button>
+  </form>
+
+  <div id="oauth-buttons" style="display:none;margin-top:16px;text-align:center">
+    <div class="muted" style="font-size:12px;margin-bottom:8px">or sign in with</div>
+    <div id="oauth-list" class="row" style="gap:6px;justify-content:center;flex-wrap:wrap"></div>
+  </div>
+
+  <form class="login-card" id="twofa-form" style="display:none">
+    <h1>NFW<span style="color:var(--accent)">.</span></h1>
+    <p class="sub">Enter the 6-digit code from your authenticator app</p>
+    <div class="error" id="twofa-error"></div>
+    <label class="field">
+      <span>Code</span>
+      <input type="text" name="code" id="twofa-code" autocomplete="one-time-code" autocapitalize="characters" maxlength="20" required placeholder="123456 or recovery code">
+    </label>
+    <button type="submit" class="primary" style="width:100%">Verify</button>
+    <p class="muted" style="font-size:12px;margin-top:12px;text-align:center">
+      Lost your device? Enter a recovery code (format XXXXX-XXXXX).
+    </p>
+  </form>
+</div>
+
+<script>window.nfw = window.nfw || {};</script>
+<script src="/static/js/theme.js"></script>
+<script src="/static/js/api.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  if (window.nfw && nfw.theme) nfw.theme.init();
+
+  // Load OAuth providers
+  fetch('/api/auth/oauth/providers').then(r => r.json()).then(data => {
+    const provs = (data && data.providers) || [];
+    if (!provs.length) return;
+    const list = document.getElementById('oauth-list');
+    const params = new URLSearchParams(location.search);
+    const next = params.get('next') || '/';
+    list.innerHTML = provs.map(p =>
+      `<a class="btn" href="/api/auth/oauth/start/${encodeURIComponent(p.id)}?next=${encodeURIComponent(next)}">${p.name.replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]))}</a>`
+    ).join('');
+    document.getElementById('oauth-buttons').style.display = '';
+  }).catch(()=>{});
+
+  var form = document.getElementById('login-form');
+  var errBox = document.getElementById('login-error');
+
+  form.addEventListener('submit', async function (e) {
+    e.preventDefault();
+    errBox.classList.remove('show');
+    var btn = form.querySelector('button');
+    btn.disabled = true;
+    btn.textContent = 'Signing in…';
+
+    if (!window.nfw || !nfw.api) {
+      errBox.textContent = 'UI not loaded — hard refresh (Ctrl+Shift+R)';
+      errBox.classList.add('show');
+      btn.disabled = false;
+      btn.textContent = 'Sign in';
+      return;
+    }
+
+    try {
+      const r = await nfw.api.post('/api/auth/login', {
+        username: document.getElementById('username').value,
+        password: document.getElementById('password').value,
+      });
+
+      if (r && r.requires_2fa) {
+        // Switch to the 2FA step
+        form.style.display = 'none';
+        document.getElementById('twofa-form').style.display = '';
+        document.getElementById('twofa-code').focus();
+        window._pending_sid = r.pending_sid;
+        return;
+      }
+
+      var params = new URLSearchParams(location.search);
+      location.href = params.get('next') || '/';
+    } catch (err) {
+      errBox.textContent = err.status === 401
+        ? 'Invalid username or password'
+        : (err.message || 'Login failed');
+      errBox.classList.add('show');
+      btn.disabled = false;
+      btn.textContent = 'Sign in';
+    }
+  });
+
+  document.getElementById('twofa-form').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    const errBox = document.getElementById('twofa-error');
+    errBox.classList.remove('show');
+    const btn = this.querySelector('button');
+    btn.disabled = true;
+    btn.textContent = 'Verifying…';
+    try {
+      await nfw.api.post('/api/auth/2fa', {
+        pending_sid: window._pending_sid,
+        code: document.getElementById('twofa-code').value.trim(),
+      });
+      var params = new URLSearchParams(location.search);
+      location.href = params.get('next') || '/';
+    } catch (err) {
+      errBox.textContent = err.message || 'Verification failed';
+      errBox.classList.add('show');
+      btn.disabled = false;
+      btn.textContent = 'Verify';
+    }
+  });
+});
+</script>
+</body>
+</html>

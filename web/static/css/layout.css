@@ -1,0 +1,344 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+a { color: var(--link); text-decoration: none; }
+a:hover { color: var(--link-hi); text-decoration: underline; }
+code, pre, .mono { font-family: var(--mono); font-size: 13px; }
+
+/* Header */
+header.app-header {
+  height: 48px;
+  background: var(--bg-alt);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 16px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+header .brand { font-weight: 600; color: var(--fg); letter-spacing: .3px; }
+header .brand .dot { color: var(--accent); }
+header .spacer { flex: 1; }
+header .host { color: var(--fg-dim); font-family: var(--mono); font-size: 12px; }
+header button, header a.btn { font-size: 13px; }
+
+/* Layout: sidebar + main */
+.layout { display: flex; flex: 1; min-height: 0; }
+aside.sidebar {
+  width: 220px;
+  background: var(--bg-alt);
+  border-right: 1px solid var(--border);
+  padding: 12px 0;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+aside.sidebar .group { margin-bottom: 12px; }
+aside.sidebar .group h3 {
+  margin: 8px 16px 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .8px;
+  color: var(--fg-mute);
+  font-weight: 600;
+}
+aside.sidebar a {
+  display: block;
+  padding: 6px 16px;
+  color: var(--fg-dim);
+  font-size: 13px;
+  border-left: 2px solid transparent;
+}
+aside.sidebar a:hover { background: var(--bg-elev); color: var(--fg); text-decoration: none; }
+aside.sidebar a.active { color: var(--fg); border-left-color: var(--accent); background: var(--sel); }
+
+main.content {
+  flex: 1;
+  padding: 20px 24px;
+  overflow-y: auto;
+  min-width: 0;
+}
+main.content h1 { font-size: 22px; margin: 0 0 4px; font-weight: 600; }
+main.content h2 { font-size: 16px; margin: 20px 0 8px; font-weight: 600; }
+main.content .subtitle { color: var(--fg-dim); margin: 0 0 20px; font-size: 13px; }
+main.content .crumbs { color: var(--fg-mute); font-size: 12px; margin-bottom: 8px; }
+
+/* Footer */
+footer.app-footer {
+  padding: 8px 16px;
+  color: var(--fg-mute);
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-alt);
+}
+
+/* Login page */
+.login-wrap {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.login-card {
+  width: 100%;
+  max-width: 360px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 28px;
+  box-shadow: var(--shadow);
+}
+.login-card h1 { margin: 0 0 4px; font-size: 20px; }
+.login-card .sub { color: var(--fg-dim); margin: 0 0 20px; font-size: 13px; }
+.login-card .error {
+  color: var(--err);
+  background: rgba(248,81,73,.1);
+  border: 1px solid rgba(248,81,73,.3);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  display: none;
+}
+.login-card .error.show { display: block; }
+
+
+/* Sidebar toggle */
+body.sidebar-collapsed aside.sidebar {
+  width: 0;
+  padding: 0;
+  border-right: none;
+  overflow: hidden;
+}
+body.sidebar-collapsed main.content {
+  padding-left: 24px;
+}
+#sidebar-toggle {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-size: 16px;
+  padding: 4px 10px;
+  cursor: pointer;
+  border-radius: 6px;
+  line-height: 1;
+}
+#sidebar-toggle:hover {
+  background: var(--border);
+  border-color: var(--border-hi);
+}
+@media (max-width: 700px) {
+  aside.sidebar {
+    position: fixed;
+    top: 48px;
+    left: 0;
+    bottom: 0;
+    z-index: 20;
+    box-shadow: var(--shadow);
+    transition: width .15s ease-out;
+  }
+  body.sidebar-collapsed aside.sidebar {
+    box-shadow: none;
+  }
+}
+
+
+/* Preload: hide sidebar before paint to avoid flash */
+
+
+/* ---------- Custom scrollbars ---------- */
+* {
+  scrollbar-width: thin;                     /* Firefox */
+  scrollbar-color: var(--scrollbar-thumb, #30363d)
+                   var(--scrollbar-track, transparent);
+}
+
+/* WebKit (Chrome, Edge, Safari) */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track, transparent);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb, #30363d);
+  border-radius: 6px;
+  border: 2px solid var(--bg, #0d1117);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hi, #484f58);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Let content area scroll with the thin bar */
+main.content, aside.sidebar, pre.code, textarea {
+  scrollbar-width: thin;
+}
+
+/* Kill the ugly focus ring on the scrollbar */
+::-webkit-scrollbar-button {
+  display: none;
+  height: 0;
+  width: 0;
+}
+
+
+
+
+
+
+main.content::-webkit-scrollbar,
+aside.sidebar::-webkit-scrollbar,
+html::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+main.content::-webkit-scrollbar-track,
+aside.sidebar::-webkit-scrollbar-track,
+html::-webkit-scrollbar-track {
+  background: transparent;
+}
+main.content::-webkit-scrollbar-thumb,
+aside.sidebar::-webkit-scrollbar-thumb,
+html::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 6px;
+  border: 2px solid var(--bg, #0d1117);
+  transition: background .25s ease-out;
+}
+/* Reveal when scrolling OR hovering the element */
+main.content.is-scrolling::-webkit-scrollbar-thumb,
+aside.sidebar.is-scrolling::-webkit-scrollbar-thumb,
+html.is-scrolling::-webkit-scrollbar-thumb,
+main.content:hover::-webkit-scrollbar-thumb,
+aside.sidebar:hover::-webkit-scrollbar-thumb,
+html:hover::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb, #30363d);
+}
+main.content::-webkit-scrollbar-thumb:hover,
+aside.sidebar::-webkit-scrollbar-thumb:hover,
+html::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hi, #484f58);
+}
+/* Hide the arrow buttons */
+main.content::-webkit-scrollbar-button,
+aside.sidebar::-webkit-scrollbar-button,
+html::-webkit-scrollbar-button {
+  display: none;
+  height: 0;
+  width: 0;
+}
+
+
+/* ---------- NFW modern scrollbars ---------- */
+/* Always visible, thin, rounded, theme-aware. */
+main.content::-webkit-scrollbar,
+aside.sidebar::-webkit-scrollbar,
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+pre.code::-webkit-scrollbar,
+textarea::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+main.content::-webkit-scrollbar-track,
+aside.sidebar::-webkit-scrollbar-track,
+html::-webkit-scrollbar-track,
+body::-webkit-scrollbar-track,
+pre.code::-webkit-scrollbar-track,
+textarea::-webkit-scrollbar-track {
+  background: transparent;
+}
+main.content::-webkit-scrollbar-thumb,
+aside.sidebar::-webkit-scrollbar-thumb,
+html::-webkit-scrollbar-thumb,
+body::-webkit-scrollbar-thumb,
+pre.code::-webkit-scrollbar-thumb,
+textarea::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb, #30363d);
+  border-radius: 6px;
+  border: 2px solid var(--bg, #0d1117);
+}
+main.content::-webkit-scrollbar-thumb:hover,
+aside.sidebar::-webkit-scrollbar-thumb:hover,
+html::-webkit-scrollbar-thumb:hover,
+body::-webkit-scrollbar-thumb:hover,
+pre.code::-webkit-scrollbar-thumb:hover,
+textarea::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hi, #484f58);
+}
+main.content::-webkit-scrollbar-button,
+aside.sidebar::-webkit-scrollbar-button,
+html::-webkit-scrollbar-button,
+body::-webkit-scrollbar-button,
+pre.code::-webkit-scrollbar-button,
+textarea::-webkit-scrollbar-button {
+  display: none;
+  height: 0;
+  width: 0;
+}
+main.content::-webkit-scrollbar-corner,
+aside.sidebar::-webkit-scrollbar-corner,
+html::-webkit-scrollbar-corner,
+body::-webkit-scrollbar-corner {
+  background: transparent;
+}
+/* NFW modern scrollbars */
+
+
+/* ---------- Mobile sidebar ---------- */
+/* On screens < 900px: sidebar is an overlay drawer.
+   - Collapsed (default on mobile): hidden entirely
+   - Expanded: overlays content with a dim background
+*/
+@media (max-width: 900px) {
+
+  /* When collapsed: sidebar takes no space */
+  body.sidebar-collapsed aside.sidebar {
+    display: none !important;
+  }
+
+  /* When expanded: overlay drawer */
+  body:not(.sidebar-collapsed) aside.sidebar {
+    position: fixed;
+    top: 48px;
+    left: 0;
+    bottom: 0;
+    width: 240px;
+    max-width: 80vw;
+    z-index: 30;
+    box-shadow: 4px 0 20px rgba(0,0,0,.5);
+    background: var(--bg-alt);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+  }
+
+  /* Backdrop when the sidebar is open */
+
+  /* Make the main content fill the width */
+  main.content {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+}
+
+
+/* kill any body ::after */
+body::after {
+  content: none !important;
+  display: none !important;
+}

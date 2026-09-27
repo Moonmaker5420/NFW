@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}NAT Reflection{% endblock %}
+{% block content %}
+<h1>NAT Reflection</h1>
+<p class="subtitle">Hairpin NAT: let LAN clients reach port-forwards via the WAN IP.</p>
+
+{% include "nat/_tabs.html" %}
+
+<div class="row between" style="margin-bottom:12px">
+  <label class="row" style="gap:6px"><input type="checkbox" id="enabled"> Enable NAT reflection</label>
+  <div class="row">
+    <button id="apply-btn" class="primary">Save &amp; Apply</button>
+    <button id="refresh-btn">Refresh</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>About</h2>
+  <p class="muted" style="font-size:13px">
+    When enabled, a LAN client hitting the WAN IP on a forwarded port is
+    redirected to the internal target, and the source is masqueraded to the
+    firewall's LAN IP so the reply returns via the firewall. This mirrors
+    OPNsense's "NAT reflection: enable" behaviour.
+  </p>
+</div>
+
+<div class="card">
+  <h2>Preview (generated nft table)</h2>
+  <pre class="code" id="preview" style="max-height:400px">—</pre>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+async function load() {
+  try {
+    const r = await nfw.api.get('/api/firewall/nat/reflection');
+    document.getElementById('enabled').checked = !!(r.reflection && r.reflection.enabled);
+  } catch (e) { nfw.toast.err(e.message); }
+  try {
+    const p = await nfw.api.get('/api/firewall/preview');
+    document.getElementById('preview').textContent = p.ruleset || '—';
+  } catch (_) {}
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  load();
+  document.getElementById('refresh-btn').addEventListener('click', load);
+  document.getElementById('apply-btn').addEventListener('click', async () => {
+    try {
+      await nfw.api.put('/api/firewall/nat/reflection', {
+        reflection: { enabled: document.getElementById('enabled').checked },
+      });
+      const r = await nfw.api.post('/api/firewall/apply');
+      nfw.toast.ok('Reflection applied (' + (r.bytes || 0) + ' bytes)');
+      load();
+    } catch (e) { nfw.toast.err(e.message); }
+  });
+});
+</script>
+{% endblock %}

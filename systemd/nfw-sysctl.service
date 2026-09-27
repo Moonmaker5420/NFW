@@ -1,0 +1,14 @@
+[Unit]
+Description=Re-apply NFW sysctl tunables after modules load
+DefaultDependencies=no
+After=systemd-modules-load.service
+Before=sysinit.target nftables.service
+Wants=systemd-modules-load.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/sbin/sysctl --system
+
+[Install]
+WantedBy=sysinit.target

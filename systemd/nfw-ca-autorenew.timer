@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily check for expiring CA certificates
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=24h
+AccuracySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,294 @@
+{% extends "base.html" %}
+{% block title %}Aliases{% endblock %}
+{% block content %}
+<h1>Aliases</h1>
+<p class="subtitle">Named IP / network / port groups used in rules as <code>@name</code>. Supports manual lists, URL tables, and GeoIP country sets.</p>
+
+<div class="row between" style="margin-bottom:12px">
+  <button id="add-btn" class="primary">+ Add alias</button>
+  <div>
+    <button id="refresh-all-btn">Refresh all URL/GeoIP</button>
+    <button id="reload-btn">Reload</button>
+  </div>
+</div>
+
+<div class="card">
+  <div id="tbl"><div class="muted">Loading…</div></div>
+</div>
+
+<template id="form-tpl">
+  <label class="field"><span>Name (letters, digits, underscore)</span>
+    <input type="text" name="name" autocomplete="off">
+  </label>
+  <label class="field"><span>Type</span>
+    <select name="type">
+      <option value="host">Host (single IP)</option>
+      <option value="network">Network (CIDR)</option>
+      <option value="port">Port</option>
+      <option value="port_range">Port range</option>
+      <option value="url">URL table (fetch CIDR list)</option>
+      <option value="geoip">GeoIP (country set)</option>
+    </select>
+  </label>
+
+  <div data-block="values">
+    <label class="field"><span>Values (one per line, or comma-separated)</span>
+      <textarea name="values" rows="4"></textarea>
+    </label>
+  </div>
+
+  <div data-block="url" hidden>
+    <label class="field"><span>URL (must be https://)</span>
+      <input type="text" name="url" autocomplete="off" placeholder="https://example.com/list.txt">
+    </label>
+    <label class="field"><span>Format</span>
+      <select name="format">
+        <option value="ipv4">IPv4 only</option>
+        <option value="both">IPv4 + IPv6</option>
+        <option value="ipv6">IPv6 only</option>
+      </select>
+    </label>
+  </div>
+
+  <div data-block="geoip" hidden>
+    <label class="field"><span>Countries (ISO-2 codes, comma-separated)</span>
+      <input type="text" name="countries" list="cc-list" autocomplete="off" placeholder="CN,RU,IR">
+    </label>
+  </div>
+
+  <div data-block="remote" hidden>
+    <label class="field"><span>Refresh schedule</span>
+      <select name="refresh">
+        <option value="hourly">Hourly</option>
+        <option value="daily" selected>Daily</option>
+        <option value="weekly">Weekly</option>
+        <option value="monthly">Monthly</option>
+        <option value="manual">Manual only</option>
+      </select>
+    </label>
+    <label class="field" style="flex-direction:row;align-items:center;gap:8px">
+      <input type="checkbox" name="enabled" checked style="width:auto">
+      <span style="margin:0">Enabled (participates in auto-refresh)</span>
+    </label>
+  </div>
+</template>
+
+<datalist id="cc-list">
+  <option value="AU">Australia</option><option value="BR">Brazil</option>
+  <option value="CA">Canada</option><option value="CN">China</option>
+  <option value="DE">Germany</option><option value="FR">France</option>
+  <option value="GB">United Kingdom</option><option value="HK">Hong Kong</option>
+  <option value="IN">India</option><option value="IR">Iran</option>
+  <option value="JP">Japan</option><option value="KP">North Korea</option>
+  <option value="KR">South Korea</option><option value="MX">Mexico</option>
+  <option value="NL">Netherlands</option><option value="RU">Russia</option>
+  <option value="SG">Singapore</option><option value="TR">Turkey</option>
+  <option value="UA">Ukraine</option><option value="US">United States</option>
+  <option value="VN">Vietnam</option><option value="ZZ">Unknown / unallocated</option>
+</datalist>
+{% endblock %}
+{% block scripts %}
+<script>
+let ALIASES = [];
+let STATUS  = {};
+
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function isRemote(t){ return t === 'url' || t === 'geoip'; }
+
+function fmtTime(ts){
+  if (!ts) return '';
+  const d = new Date(ts * 1000);
+  const now = Date.now();
+  const diff = (now - d.getTime()) / 1000;
+  if (diff < 60)     return diff.toFixed(0) + 's ago';
+  if (diff < 3600)   return (diff/60).toFixed(0) + 'm ago';
+  if (diff < 86400)  return (diff/3600).toFixed(0) + 'h ago';
+  return (diff/86400).toFixed(0) + 'd ago';
+}
+
+async function load() {
+  try {
+    ALIASES = (await nfw.api.get('/api/firewall/aliases')).aliases || [];
+    try {
+      STATUS = (await nfw.api.get('/api/firewall/aliases/status')).status || {};
+    } catch (e) {
+      STATUS = {};
+    }
+    render();
+  } catch (e) { nfw.toast.err(e.message); }
+}
+
+function renderStatusCell(a) {
+  if (!isRemote(a.type)) return '';
+  const st = STATUS[a.name];
+  if (!st || !st.fetched_at) return '<span class="muted">not yet fetched</span>';
+  if (st.error) return '<span class="badge danger">' + esc(st.error).slice(0,60) + '</span>';
+  const n = st.count != null ? st.count : 0;
+  const ago = fmtTime(st.last_success || st.fetched_at);
+  return '<span class="mono">' + n + '</span> entries · <span class="muted">' + esc(ago) + '</span>';
+}
+
+function renderValues(a) {
+  if (a.type === 'url') {
+    return '<span class="mono">' + esc(a.url || '') + '</span>'
+         + '<br><span class="muted">format: ' + esc(a.format || 'both')
+         + ', refresh: ' + esc(a.refresh || 'daily') + '</span>';
+  }
+  if (a.type === 'geoip') {
+    return '<span class="mono">' + esc((a.countries || []).join(',')) + '</span>'
+         + '<br><span class="muted">refresh: ' + esc(a.refresh || 'monthly') + '</span>';
+  }
+  return '<span class="mono" style="white-space:pre-wrap">' + esc((a.values || []).join('\n')) + '</span>';
+}
+
+function render() {
+  const wrap = document.getElementById('tbl');
+  if (ALIASES.length === 0) {
+    wrap.innerHTML = '<div class="muted">No aliases</div>';
+    return;
+  }
+  const rows = ALIASES.map(a => {
+    const remote = isRemote(a.type);
+    const refreshBtn = remote
+      ? '<button class="small" data-refresh="' + esc(a.name) + '">Refresh</button>'
+      : '';
+    return `
+      <tr>
+        <td class="mono">@${esc(a.name)}</td>
+        <td><span class="badge info">${esc(a.type)}</span></td>
+        <td>${renderValues(a)}</td>
+        <td>${renderStatusCell(a)}</td>
+        <td style="width:200px;white-space:nowrap">
+          ${refreshBtn}
+          <button class="small" data-edit="${esc(a.name)}">Edit</button>
+          <button class="small danger" data-del="${esc(a.name)}">Del</button>
+        </td>
+      </tr>`;
+  }).join('');
+  wrap.innerHTML =
+    '<table class="data"><thead><tr>'
+    + '<th>Name</th><th>Type</th><th>Definition</th><th>Status</th><th></th>'
+    + '</tr></thead><tbody>' + rows + '</tbody></table>';
+  bind();
+}
+
+function bind() {
+  document.querySelectorAll('[data-del]').forEach(el => el.addEventListener('click', async () => {
+    if (!confirm('Delete alias @' + el.getAttribute('data-del') + '?')) return;
+    try {
+      await nfw.api.del('/api/firewall/aliases/' + encodeURIComponent(el.getAttribute('data-del')));
+      nfw.toast.ok('Deleted (staged)');
+      load();
+    } catch (e) { nfw.toast.err(e.message); }
+  }));
+  document.querySelectorAll('[data-edit]').forEach(el =>
+    el.addEventListener('click', () => edit(el.getAttribute('data-edit'))));
+  document.querySelectorAll('[data-refresh]').forEach(el =>
+    el.addEventListener('click', async () => {
+      const nm = el.getAttribute('data-refresh');
+      el.disabled = true; el.textContent = '…';
+      try {
+        const r = await nfw.api.post('/api/firewall/aliases/' + encodeURIComponent(nm) + '/refresh');
+        const first = (r && r.refreshed && r.refreshed[0]) || {};
+        if (first.error) nfw.toast.err(nm + ': ' + first.error);
+        else nfw.toast.ok(nm + ': ' + (first.count||0) + ' entries');
+        load();
+      } catch (e) { nfw.toast.err(e.message); el.disabled = false; el.textContent = 'Refresh'; }
+    }));
+}
+
+function updateVisibility(div, type) {
+  const showValues = ['host','network','port','port_range'].includes(type);
+  const showUrl    = type === 'url';
+  const showGeo    = type === 'geoip';
+  const showRemote = showUrl || showGeo;
+  div.querySelector('[data-block=values]').hidden = !showValues;
+  div.querySelector('[data-block=url]').hidden    = !showUrl;
+  div.querySelector('[data-block=geoip]').hidden  = !showGeo;
+  div.querySelector('[data-block=remote]').hidden = !showRemote;
+}
+
+function edit(name) {
+  const a = name ? ALIASES.find(x => x.name === name)
+                 : {name:'', type:'host', values:[], refresh:'daily', format:'both', enabled:true};
+  const tpl = document.getElementById('form-tpl').innerHTML;
+  const div = document.createElement('div'); div.innerHTML = tpl;
+
+  div.querySelector('[name=name]').value = a.name || '';
+  div.querySelector('[name=type]').value = a.type || 'host';
+  div.querySelector('[name=values]').value = (a.values || []).join('\n');
+  div.querySelector('[name=url]').value = a.url || '';
+  div.querySelector('[name=format]').value = a.format || 'both';
+  div.querySelector('[name=countries]').value = (a.countries || []).join(',');
+  div.querySelector('[name=refresh]').value = a.refresh || (a.type === 'geoip' ? 'monthly' : 'daily');
+  div.querySelector('[name=enabled]').checked = a.enabled !== false;
+
+  updateVisibility(div, a.type);
+  div.querySelector('[name=type]').addEventListener('change', ev => {
+    updateVisibility(div, ev.target.value);
+    const r = div.querySelector('[name=refresh]');
+    if (ev.target.value === 'geoip' && r.value === 'daily') r.value = 'monthly';
+    if (ev.target.value === 'url'   && r.value === 'monthly') r.value = 'daily';
+  });
+
+  nfw.modal.open({title: name ? 'Edit alias' : 'New alias', body: ''});
+  const bg = document.querySelector('.modal-bg');
+  const m = bg.querySelector('.modal');
+  m.innerHTML = '<h2>' + (name ? 'Edit alias' : 'New alias') + '</h2>';
+  m.appendChild(div);
+
+  const acts = document.createElement('div'); acts.className = 'actions';
+  const cancel = document.createElement('button'); cancel.textContent = 'Cancel';
+  cancel.onclick = () => bg.remove();
+  const save = document.createElement('button'); save.className = 'primary'; save.textContent = 'Save';
+  save.onclick = async () => {
+    const type = div.querySelector('[name=type]').value;
+    const body = {
+      name: div.querySelector('[name=name]').value.trim(),
+      type: type,
+    };
+    if (['host','network','port','port_range'].includes(type)) {
+      body.values = div.querySelector('[name=values]').value
+        .split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+    } else if (type === 'url') {
+      body.url = div.querySelector('[name=url]').value.trim();
+      body.format = div.querySelector('[name=format]').value;
+      body.refresh = div.querySelector('[name=refresh]').value;
+      body.enabled = div.querySelector('[name=enabled]').checked;
+      if (!body.url) { nfw.toast.err('URL is required'); return; }
+    } else if (type === 'geoip') {
+      body.countries = div.querySelector('[name=countries]').value
+        .split(',').map(s => s.trim().toUpperCase()).filter(s => /^[A-Z]{2}$/.test(s));
+      body.refresh = div.querySelector('[name=refresh]').value;
+      body.enabled = div.querySelector('[name=enabled]').checked;
+      if (body.countries.length === 0) { nfw.toast.err('At least one ISO-2 country code required'); return; }
+    }
+    try {
+      if (name) await nfw.api.put('/api/firewall/aliases/' + encodeURIComponent(name), {alias: body});
+      else      await nfw.api.post('/api/firewall/aliases', {alias: body});
+      nfw.toast.ok('Saved (staged)');
+      bg.remove();
+      load();
+    } catch (e) { nfw.toast.err(e.message); }
+  };
+  acts.appendChild(cancel); acts.appendChild(save);
+  m.appendChild(acts);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  load();
+  document.getElementById('reload-btn').addEventListener('click', load);
+  document.getElementById('add-btn').addEventListener('click', () => edit(null));
+  document.getElementById('refresh-all-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('refresh-all-btn');
+    btn.disabled = true; btn.textContent = 'Refreshing…';
+    try {
+      const r = await nfw.api.post('/api/firewall/aliases/refresh-all');
+      nfw.toast.ok('Refreshed ' + ((r && r.count) || 0) + ' alias(es)');
+      load();
+    } catch (e) { nfw.toast.err(e.message); }
+    finally { btn.disabled = false; btn.textContent = 'Refresh all URL/GeoIP'; }
+  });
+});
+</script>
+{% endblock %}

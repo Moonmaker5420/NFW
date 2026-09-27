@@ -1,0 +1,248 @@
+{% extends "base.html" %}
+{% block title %}Reporting{% endblock %}
+{% block content %}
+<h1>Reporting</h1>
+<p class="subtitle">System metrics, interface traffic, live connections</p>
+
+<div class="row" style="gap:8px;margin-bottom:16px;flex-wrap:wrap">
+  <button class="rtab primary" data-tab="graphs">Graphs</button>
+  <button class="rtab" data-tab="live">Live</button>
+  <button class="rtab" data-tab="netflow">Netflow</button>
+</div>
+
+<!-- ==================== GRAPHS ==================== -->
+<div id="tab-graphs" class="rpanel">
+  <div class="row between" style="margin-bottom:12px">
+    <div class="row" style="gap:8px">
+      <span class="muted" style="font-size:12px">Range:</span>
+      <select id="range-sel">
+        <option value="hour">1 hour</option>
+        <option value="day" selected>1 day</option>
+        <option value="week">1 week</option>
+        <option value="month">1 month</option>
+        <option value="year">1 year</option>
+      </select>
+      <label class="row" style="gap:6px;font-size:12px">
+        <input type="checkbox" id="auto-refresh" style="width:auto"> Refresh every 30s
+      </label>
+    </div>
+    <button id="reload-graphs">Reload</button>
+  </div>
+  <div id="graphs-grid" class="grid cols-2"></div>
+</div>
+
+<!-- ==================== LIVE ==================== -->
+<div id="tab-live" class="rpanel" style="display:none">
+  <div class="row between" style="margin-bottom:12px">
+    <span class="muted" id="live-summary">—</span>
+    <div class="row" style="gap:6px">
+      <input type="number" id="live-limit" value="20" min="5" max="200" style="width:80px">
+      <button id="live-refresh">Refresh</button>
+      <label class="row" style="gap:6px;font-size:12px">
+        <input type="checkbox" id="live-auto" style="width:auto" checked> Auto (5s)
+      </label>
+    </div>
+  </div>
+  <div class="grid cols-3">
+    <div class="card">
+      <h2>Top sources</h2>
+      <div id="tt-src"><div class="muted">—</div></div>
+    </div>
+    <div class="card">
+      <h2>Top destinations</h2>
+      <div id="tt-dst"><div class="muted">—</div></div>
+    </div>
+    <div class="card">
+      <h2>Top ports</h2>
+      <div id="tt-port"><div class="muted">—</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== NETFLOW ==================== -->
+<div id="tab-netflow" class="rpanel" style="display:none">
+  <div class="card">
+    <h2>Netflow export (softflowd)</h2>
+    <p class="muted" style="font-size:12px">
+      Export flow records to an external collector (nfdump, ntopng, ELK).
+    </p>
+    <div class="row between" style="margin-bottom:8px">
+      <label class="row" style="gap:6px"><input type="checkbox" id="nf-enabled" style="width:auto"> Enabled</label>
+      <div class="row">
+        <button id="nf-save" class="primary">Save &amp; Apply</button>
+        <button id="nf-refresh">Refresh</button>
+      </div>
+    </div>
+    <div class="grid cols-3">
+      <label class="field"><span>Collector host / IP</span><input type="text" id="nf-target" placeholder="10.0.0.5"></label>
+      <label class="field"><span>Collector port</span><input type="number" id="nf-port" value="2055"></label>
+      <label class="field"><span>Protocol</span>
+        <select id="nf-proto">
+          <option value="v9">Netflow v9</option>
+          <option value="v5">Netflow v5</option>
+          <option value="ipfix">IPFIX</option>
+        </select>
+      </label>
+      <label class="field" style="grid-column: span 2"><span>Interfaces (comma-separated, blank = any)</span><input type="text" id="nf-ifaces" placeholder="enp1s0,enp2s0"></label>
+      <label class="field"><span>Max flows</span><input type="number" id="nf-max" value="8192"></label>
+    </div>
+    <div class="stat-label mt-2">Service state</div>
+    <div class="stat-value small" id="nf-state">—</div>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+document.querySelectorAll('.rtab').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.rtab').forEach(x => x.classList.remove('primary'));
+  b.classList.add('primary');
+  document.querySelectorAll('.rpanel').forEach(p => p.style.display = 'none');
+  document.getElementById('tab-' + b.dataset.tab).style.display = '';
+  if (b.dataset.tab === 'graphs')   loadGraphs();
+  if (b.dataset.tab === 'live')     loadLive();
+  if (b.dataset.tab === 'netflow')  loadNetflow();
+}));
+
+// ---------- Graphs ----------
+let GRAPH_NAMES = [];
+
+async function loadGraphList() {
+  const r = await nfw.api.get('/api/reporting/graphs');
+  GRAPH_NAMES = r.graphs || [];
+}
+
+function graphCard(name, label, width, height) {
+  const rng = document.getElementById('range-sel').value;
+  const url = `/api/reporting/graph/${encodeURIComponent(name)}.png?range=${encodeURIComponent(rng)}&width=${width}&height=${height}&_=${Date.now()}`;
+  return `<div class="card">
+    <img src="${url}" alt="${esc(label)}" style="width:100%;display:block">
+  </div>`;
+}
+
+async function loadGraphs() {
+  if (!GRAPH_NAMES.length) await loadGraphList();
+  const grid = document.getElementById('graphs-grid');
+  // Fixed graphs first
+  const fixed = [
+    ['system_cpu', 'CPU'],
+    ['system_mem', 'Memory'],
+    ['system_load', 'Load'],
+    ['system_conntrack', 'Conntrack'],
+    ['system_disk', 'Disk'],
+  ];
+  const ifGraphs = GRAPH_NAMES.filter(n => n.startsWith('if_') && !n.endsWith('_pkts') && !n.endsWith('_errs'));
+  const html = [];
+  for (const [name, label] of fixed) {
+    html.push(graphCard(name, label, 700, 200));
+  }
+  for (const name of ifGraphs) {
+    const iface = name.substring(3);
+    html.push(graphCard(name, 'traffic ' + iface, 700, 200));
+  }
+  // Packet graphs (optional, only if interfaces exist)
+  for (const name of ifGraphs) {
+    const iface = name.substring(3);
+    html.push(graphCard(name + '_pkts', 'packets ' + iface, 700, 160));
+    html.push(graphCard(name + '_errs', 'errors ' + iface, 700, 160));
+  }
+  grid.innerHTML = html.join('');
+}
+
+document.getElementById('range-sel').addEventListener('change', loadGraphs);
+document.getElementById('reload-graphs').addEventListener('click', loadGraphs);
+
+let graphTimer = null;
+function scheduleGraphRefresh() {
+  if (graphTimer) clearInterval(graphTimer);
+  if (document.getElementById('auto-refresh').checked) {
+    graphTimer = setInterval(() => {
+      if (document.getElementById('tab-graphs').style.display !== 'none') loadGraphs();
+    }, 30000);
+  }
+}
+document.getElementById('auto-refresh').addEventListener('change', scheduleGraphRefresh);
+
+// ---------- Live ----------
+let liveTimer = null;
+
+async function loadLive() {
+  try {
+    const limit = parseInt(document.getElementById('live-limit').value) || 20;
+    const r = await nfw.api.get('/api/reporting/top?limit=' + limit);
+    document.getElementById('live-summary').textContent =
+      `${r.total_flows} active conntrack entries`;
+    const render = (el, list) => {
+      if (!list || !list.length) { el.innerHTML = '<div class="muted">—</div>'; return; }
+      const max = list[0].count || 1;
+      el.innerHTML = '<table class="data"><tbody>' + list.map(x => {
+        const pct = Math.round(100 * x.count / max);
+        return `<tr>
+          <td class="mono" style="font-size:11px">${esc(x.key)}</td>
+          <td class="num" style="width:60px">${x.count}</td>
+          <td style="width:80px"><div style="background:var(--accent);height:6px;border-radius:3px;width:${pct}%"></div></td>
+        </tr>`;
+      }).join('') + '</tbody></table>';
+    };
+    render(document.getElementById('tt-src'), r.by_src);
+    render(document.getElementById('tt-dst'), r.by_dst);
+    render(document.getElementById('tt-port'), r.by_port);
+  } catch (e) { nfw.toast.err(e.message); }
+}
+
+function scheduleLiveRefresh() {
+  if (liveTimer) clearInterval(liveTimer);
+  if (document.getElementById('live-auto').checked) {
+    liveTimer = setInterval(() => {
+      if (document.getElementById('tab-live').style.display !== 'none') loadLive();
+    }, 5000);
+  }
+}
+document.getElementById('live-auto').addEventListener('change', scheduleLiveRefresh);
+document.getElementById('live-refresh').addEventListener('click', loadLive);
+
+// ---------- Netflow ----------
+async function loadNetflow() {
+  try {
+    const r = await nfw.api.get('/api/reporting/netflow');
+    const nf = r.config || {};
+    document.getElementById('nf-enabled').checked = !!nf.enabled;
+    document.getElementById('nf-target').value = nf.target || '';
+    document.getElementById('nf-port').value = nf.port || 2055;
+    document.getElementById('nf-proto').value = nf.protocol || 'v9';
+    document.getElementById('nf-ifaces').value = (nf.interfaces || []).join(',');
+    document.getElementById('nf-max').value = nf.max_flows || 8192;
+    document.getElementById('nf-state').textContent = (r.active || '—').toUpperCase();
+  } catch (e) { nfw.toast.err(e.message); }
+}
+
+document.getElementById('nf-refresh').addEventListener('click', loadNetflow);
+document.getElementById('nf-save').addEventListener('click', async () => {
+  const body = {
+    netflow: {
+      enabled: document.getElementById('nf-enabled').checked,
+      target: document.getElementById('nf-target').value.trim(),
+      port: parseInt(document.getElementById('nf-port').value) || 2055,
+      protocol: document.getElementById('nf-proto').value,
+      interfaces: document.getElementById('nf-ifaces').value.split(',').map(s=>s.trim()).filter(Boolean),
+      max_flows: parseInt(document.getElementById('nf-max').value) || 8192,
+    },
+  };
+  try {
+    await nfw.api.put('/api/reporting/netflow', body);
+    const r = await nfw.api.post('/api/reporting/netflow/apply');
+    nfw.toast.ok(r.enabled ? 'Netflow enabled' : 'Netflow disabled');
+    loadNetflow();
+  } catch (e) { nfw.toast.err(e.message); }
+});
+
+// ---------- Boot ----------
+document.addEventListener('DOMContentLoaded', () => {
+  loadGraphs();
+  scheduleGraphRefresh();
+  scheduleLiveRefresh();
+});
+</script>
+{% endblock %}

@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+{% block title %}Firewall Rules{% endblock %}
+{% block content %}
+<h1>Firewall Rules</h1>
+<p class="subtitle">First-match-wins. Drag to reorder. Toggle to enable/disable.</p>
+
+<div class="row between" style="margin-bottom:12px">
+  <button id="add-btn" class="primary">+ Add rule</button>
+  <div class="row">
+    <button id="apply-btn" class="primary">Apply ruleset</button>
+    <button id="refresh-btn">Refresh</button>
+  </div>
+</div>
+
+<div class="card">
+  <div id="rules-tbl"><div class="muted">Loading…</div></div>
+</div>
+
+<!-- Rule editor modal content is injected here -->
+<template id="rule-form-tpl">
+  <label class="field"><span>Description</span><input type="text" name="description"></label>
+  <label class="field"><span>Action</span>
+    <select name="action">
+      <option value="pass">Pass</option>
+      <option value="block">Block</option>
+      <option value="reject">Reject</option>
+    </select>
+  </label>
+  <label class="field"><span>Interface</span>
+    <select name="interface">
+      <option value="lan">LAN</option>
+      <option value="wan">WAN</option>
+    </select>
+  </label>
+  <label class="field"><span>Direction</span>
+    <select name="direction">
+      <option value="in">In</option>
+      <option value="out">Out (forward)</option>
+    </select>
+  </label>
+  <label class="field"><span>Protocol</span>
+    <select name="proto">
+      <option value="any">Any</option>
+      <option value="tcp">TCP</option>
+      <option value="udp">UDP</option>
+      <option value="icmp">ICMP</option>
+      <option value="icmpv6">ICMPv6</option>
+    </select>
+  </label>
+  <label class="field"><span>Source (any / IP / CIDR / @alias)</span>
+    <input type="text" name="source" value="any">
+  </label>
+  <label class="field"><span>Dest (any / IP / CIDR / @alias)</span>
+    <input type="text" name="dest" value="any">
+  </label>
+  <label class="field"><span>Destination port(s) — e.g. 80 or 80,443 or 1000-2000</span>
+    <input type="text" name="dport" placeholder="">
+  </label>
+  <label class="row" style="gap:6px;margin:8px 0">
+    <input type="checkbox" name="log" style="width:auto"> Log matched packets
+  </label>
+  <label class="field"><span>Log rate limit (blank = 3/minute)</span><input type="text" name="log_limit" placeholder="3/minute"></label>
+
+  <details style="margin-top:12px">
+    <summary style="cursor:pointer;color:var(--fg-dim);font-size:13px">Advanced</summary>
+    <div style="padding:8px 0">
+      <label class="field"><span>Schedule (name from Schedules page)</span><input type="text" name="schedule" placeholder="work-hours"></label>
+      <label class="field"><span>ICMP type (blank = any)</span>
+        <select name="icmp_type">
+          <option value="">any</option>
+          <option>echo-request</option>
+          <option>echo-reply</option>
+          <option>destination-unreachable</option>
+          <option>time-exceeded</option>
+          <option>parameter-problem</option>
+          <option>redirect</option>
+          <option>router-advertisement</option>
+          <option>router-solicitation</option>
+        </select>
+      </label>
+      <label class="field"><span>TCP flags to match (comma-separated: SYN,ACK,...)</span><input type="text" name="tcpflags1" placeholder="SYN"></label>
+      <label class="field"><span>TCP flags mask (comma-separated)</span><input type="text" name="tcpflags2" placeholder="SYN,ACK"></label>
+      <label class="field"><span>Conntrack state override</span>
+        <select name="statetype">
+          <option value="">(default)</option>
+          <option value="new">new</option>
+          <option value="established">established</option>
+          <option value="related">related</option>
+          <option value="invalid">invalid</option>
+        </select>
+      </label>
+      <label class="field"><span>Set DSCP on match</span>
+        <select name="dscp">
+          <option value="">(none)</option>
+          <option>cs0</option><option>cs1</option><option>cs2</option><option>cs3</option>
+          <option>cs4</option><option>cs5</option><option>cs6</option><option>cs7</option>
+          <option>af11</option><option>af21</option><option>af31</option><option>af41</option>
+          <option>ef</option>
+        </select>
+      </label>
+      <label class="field"><span>Set packet mark (tag)</span><input type="text" name="tag" placeholder="0x1"></label>
+      <label class="field"><span>Match packet mark (tagged)</span><input type="text" name="tagged" placeholder="0x1"></label>
+    </div>
+  </details>
+</template>
+{% endblock %}
+{% block scripts %}
+<script>
+let RULES = [];
+
+async function load() {
+  try {
+    RULES = (await nfw.api.get('/api/firewall/rules')).rules || [];
+    render();
+  } catch (e) { nfw.toast.err(e.message); }
+}
+
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+function render() {
+  if (RULES.length === 0) {
+    document.getElementById('rules-tbl').innerHTML =
+      '<div class="muted">No rules yet. Click "Add rule" to create one.</div>';
+    return;
+  }
+  const rows = RULES.map((r, i) => `
+    <tr draggable="true" data-id="${esc(r.id)}" data-idx="${i}">
+      <td class="mono" style="width:36px">${i+1}</td>
+      <td style="width:34px">
+        <input type="checkbox" ${r.enabled ? 'checked' : ''} data-toggle="${esc(r.id)}" style="width:auto">
+      </td>
+      <td><span class="badge ${r.action === 'pass' ? 'ok' : (r.action === 'block' ? 'err' : 'warn')}">${esc(r.action)}</span></td>
+      <td class="mono">${esc(r.interface)}/${esc(r.direction)}</td>
+      <td class="mono">${esc(r.proto)}</td>
+      <td class="mono">${esc(r.source)} → ${esc(r.dest)}${r.dport ? ':' + esc(r.dport) : ''}</td>
+      <td>${esc(r.description || '')}</td>
+      <td class="mono" style="font-size:11px;color:var(--fg-mute)">${esc(r.id)}</td>
+      <td style="width:120px">
+        <button class="small" data-edit="${esc(r.id)}">Edit</button>
+        <button class="small danger" data-del="${esc(r.id)}">Del</button>
+      </td>
+    </tr>`).join('');
+  document.getElementById('rules-tbl').innerHTML =
+    '<table class="data"><thead><tr><th>#</th><th>On</th><th>Action</th><th>Iface/Dir</th><th>Proto</th><th>Match</th><th>Description</th><th>ID</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+  bind();
+}
+
+function bind() {
+  document.querySelectorAll('[data-toggle]').forEach(el => {
+    el.addEventListener('change', async () => {
+      try { await nfw.api.post('/api/firewall/rules/' + el.getAttribute('data-toggle') + '/toggle');
+            load(); }
+      catch (e) { nfw.toast.err(e.message); }
+    });
+  });
+  document.querySelectorAll('[data-del]').forEach(el => {
+    el.addEventListener('click', async () => {
+      if (!confirm('Delete rule?')) return;
+      try { await nfw.api.del('/api/firewall/rules/' + el.getAttribute('data-del'));
+            nfw.toast.ok('Deleted'); load(); }
+      catch (e) { nfw.toast.err(e.message); }
+    });
+  });
+  document.querySelectorAll('[data-edit]').forEach(el => {
+    el.addEventListener('click', () => editRule(el.getAttribute('data-edit')));
+  });
+  // drag-to-reorder
+  document.querySelectorAll('#rules-tbl tr[draggable=true]').forEach(row => {
+    row.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', row.getAttribute('data-id')); });
+    row.addEventListener('dragover', e => e.preventDefault());
+    row.addEventListener('drop', async e => {
+      e.preventDefault();
+      const srcId = e.dataTransfer.getData('text/plain');
+      const dstId = row.getAttribute('data-id');
+      if (srcId === dstId) return;
+      const ids = RULES.map(r => r.id);
+      const si = ids.indexOf(srcId), di = ids.indexOf(dstId);
+      ids.splice(si, 1); ids.splice(di, 0, srcId);
+      try { await nfw.api.post('/api/firewall/rules/reorder', {ids}); load(); }
+      catch (e) { nfw.toast.err(e.message); }
+    });
+  });
+}
+
+function formBody(fields) {
+  const tpl = document.getElementById('rule-form-tpl').innerHTML;
+  const div = document.createElement('div');
+  div.innerHTML = tpl;
+  for (const [k, v] of Object.entries(fields || {})) {
+    const el = div.querySelector(`[name="${k}"]`);
+    if (!el) continue;
+    if (el.type === 'checkbox') el.checked = !!v;
+    else el.value = v ?? '';
+  }
+  return { el: div, read: () => {
+    const out = {};
+    div.querySelectorAll('[name]').forEach(el => {
+      out[el.name] = el.type === 'checkbox' ? el.checked : el.value;
+    });
+    return out;
+  }};
+}
+
+function editRule(id) {
+  const r = RULES.find(x => x.id === id);
+  const f = formBody(r || {});
+  nfw.modal.open({
+    title: r ? 'Edit rule' : 'New rule',
+    body: '',
+    actions: [],
+  });
+  // simpler: replace modal body with the form
+  const bg = document.querySelector('.modal-bg');
+  const m = bg.querySelector('.modal');
+  m.innerHTML = '<h2>' + (r ? 'Edit rule' : 'New rule') + '</h2>';
+  m.appendChild(f.el);
+  const acts = document.createElement('div');
+  acts.className = 'actions';
+  const cancel = document.createElement('button'); cancel.textContent = 'Cancel';
+  cancel.onclick = () => bg.remove();
+  const save = document.createElement('button'); save.className = 'primary'; save.textContent = 'Save';
+  save.onclick = async () => {
+    const body = f.read();
+    body.order = r ? r.order : (RULES.length + 1) * 10;
+    body.id = r ? r.id : undefined;
+    try {
+      if (r) await nfw.api.put('/api/firewall/rules/' + r.id, {rule: body});
+      else    await nfw.api.post('/api/firewall/rules', {rule: body});
+      nfw.toast.ok('Saved (staged) — apply to activate');
+      bg.remove();
+      load();
+    } catch (e) { nfw.toast.err(e.message); }
+  };
+  acts.appendChild(cancel); acts.appendChild(save);
+  m.appendChild(acts);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  load();
+  document.getElementById('refresh-btn').addEventListener('click', load);
+  document.getElementById('add-btn').addEventListener('click', () => editRule(null));
+  document.getElementById('apply-btn').addEventListener('click', async () => {
+    if (!confirm('Apply the current ruleset? This reloads nftables.')) return;
+    try {
+      const r = await nfw.api.post('/api/firewall/apply');
+      nfw.toast.ok('Applied (' + r.bytes + ' bytes)');
+    } catch (e) { nfw.toast.err(e.message); }
+  });
+});
+</script>
+{% endblock %}

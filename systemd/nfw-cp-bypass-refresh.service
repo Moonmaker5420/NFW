@@ -1,0 +1,9 @@
+[Unit]
+Description=NFW captive portal bypass refresh (MAC + hostname)
+After=network-online.target nfw-configd.service
+Wants=network-online.target
+Requires=nfw-configd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/nfw-cp-bypass-refresh.py

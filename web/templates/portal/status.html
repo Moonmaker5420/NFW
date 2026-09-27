@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Connected &mdash; {{ cfg.gateway_name }}</title>
+<style>
+  body {
+    margin: 0; padding: 40px 20px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0d1117; color: #c9d1d9;
+    display: flex; align-items: flex-start; justify-content: center;
+  }
+  .card {
+    background: #161b22; border: 1px solid #30363d; border-radius: 12px;
+    padding: 32px 28px; max-width: 440px; width: 100%;
+  }
+  h1 { margin: 0 0 6px; font-size: 22px; color: #3fb950; text-align: center; }
+  .sub { text-align: center; color: #8b949e; font-size: 14px; margin-bottom: 24px; }
+  .row {
+    display: flex; justify-content: space-between;
+    padding: 10px 0; border-bottom: 1px solid #21262d;
+    font-size: 14px;
+  }
+  .row:last-of-type { border-bottom: 0; }
+  .label { color: #8b949e; }
+  .value { color: #c9d1d9; font-family: ui-monospace, monospace; }
+  .remaining {
+    margin-top: 20px; padding: 14px;
+    background: rgba(88,166,255,0.08); border: 1px solid #58a6ff;
+    border-radius: 8px; text-align: center;
+  }
+  .remaining .big {
+    display: block; font-size: 28px; font-weight: 600;
+    color: #58a6ff; margin-bottom: 4px;
+  }
+  .remaining .small { color: #8b949e; font-size: 12px; }
+  form { margin-top: 20px; }
+  button {
+    width: 100%; padding: 11px;
+    background: transparent; color: #f85149;
+    border: 1px solid #f85149; border-radius: 8px;
+    font-size: 14px; font-weight: 500; cursor: pointer;
+  }
+  button:hover { background: rgba(248,81,73,0.1); }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>✓ Connected</h1>
+    <p class="sub">You have network access on {{ cfg.gateway_name }}</p>
+
+    <div class="row">
+      <span class="label">Username</span>
+      <span class="value">{{ session.username }}</span>
+    </div>
+    <div class="row">
+      <span class="label">Your IP</span>
+      <span class="value">{{ session.ip }}</span>
+    </div>
+    <div class="row">
+      <span class="label">Authenticated via</span>
+      <span class="value">{{ session.auth_backend }}</span>
+    </div>
+
+    <div class="remaining">
+      <span class="big" id="countdown">{{ remaining }}</span>
+      <span class="small">seconds until session end</span>
+      {% if hard_remaining is not none %}
+      <span class="small" style="margin-top:6px;display:block">
+        Hard cap: <span id="hardcountdown">{{ hard_remaining }}</span>s
+      </span>
+      {% endif %}
+    </div>
+
+    <form method="post" action="/logout">
+      <button type="submit">Disconnect</button>
+    </form>
+  </div>
+  <script>
+    let r = {{ remaining }};
+    const el = document.getElementById('countdown');
+    let hr = {{ hard_remaining if hard_remaining is not none else 0 }};
+    const hEl = document.getElementById('hardcountdown');
+    setInterval(() => {
+      r = Math.max(0, r - 1);
+      el.textContent = r;
+      if (hEl && hr > 0) { hr = Math.max(0, hr - 1); hEl.textContent = hr; }
+      if (r === 0) location.reload();
+    }, 1000);
+  </script>
+</body>
+</html>

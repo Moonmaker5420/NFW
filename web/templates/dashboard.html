@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+<p class="subtitle">Live status of the firewall</p>
+
+<div class="grid cols-4">
+  <div class="card">
+    <div class="stat-label">Hostname</div>
+    <div class="stat-value small" id="s-hostname">—</div>
+  </div>
+  <div class="card">
+    <div class="stat-label">Kernel</div>
+    <div class="stat-value small" id="s-kernel">—</div>
+  </div>
+  <div class="card">
+    <div class="stat-label">Uptime</div>
+    <div class="stat-value small" id="s-uptime">—</div>
+  </div>
+  <div class="card">
+    <div class="stat-label">Load (1/5/15)</div>
+    <div class="stat-value small mono" id="s-load">—</div>
+  </div>
+</div>
+
+<div class="grid cols-3">
+  <div class="card">
+    <div class="stat-label">CPU</div>
+    <div class="stat-value" id="s-cpu">—</div>
+    <div class="stat-sub">%</div>
+  </div>
+  <div class="card">
+    <div class="stat-label">Memory</div>
+    <div class="stat-value" id="s-mem">—</div>
+    <div class="stat-sub" id="s-mem-detail">—</div>
+  </div>
+  <div class="card">
+    <div class="stat-label">Conntrack</div>
+    <div class="stat-value" id="s-ct">—</div>
+    <div class="stat-sub" id="s-ct-detail">—</div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>CPU history <span class="right" id="cpu-max">0%</span></h2>
+  <canvas class="chart" id="cpu-chart"></canvas>
+</div>
+
+<div class="card">
+  <h2>Interfaces</h2>
+  <div id="ifaces"><div class="muted">Loading…</div></div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+const charts = {};
+document.addEventListener('DOMContentLoaded', async () => {
+  charts.cpu = nfw.chart.make(document.getElementById('cpu-chart'), { max: 100 });
+
+  // Static info
+  try {
+    const info = await nfw.api.get('/api/system/info');
+    document.getElementById('s-hostname').textContent = info.hostname;
+    document.getElementById('s-kernel').textContent = info.kernel;
+    document.getElementById('s-load').textContent = (info.loadavg || []).join(' / ');
+    document.getElementById('s-uptime').textContent = fmtUptime(info.uptime_s);
+  } catch (e) { nfw.toast.err('Failed to load system info'); }
+
+  // Interfaces (static, refresh every 30s)
+  async function loadIfaces() {
+    try {
+      const r = await nfw.api.get('/api/system/interfaces');
+      const list = r.interfaces || [];
+      const rows = list.map(i => ({
+        name: i.ifname, state: i.operstate, mac: i.mac || '',
+        addrs: (i.addresses || []).map(a => `${a.family} ${a.local}/${a.prefixlen}`).join(', '),
+      }));
+      const html = rows.map(r => `
+        <tr>
+          <td class="mono">${esc(r.name)}</td>
+          <td><span class="badge ${r.state === 'UP' ? 'ok' : 'warn'}">${esc(r.state)}</span></td>
+          <td class="mono">${esc(r.mac)}</td>
+          <td class="mono">${esc(r.addrs)}</td>
+        </tr>`).join('');
+      document.getElementById('ifaces').innerHTML =
+        '<table class="data"><thead><tr><th>Name</th><th>State</th><th>MAC</th><th>Addresses</th></tr></thead><tbody>' + html + '</tbody></table>';
+    } catch (e) { /* silent */ }
+  }
+  loadIfaces();
+  setInterval(loadIfaces, 30000);
+
+  // WebSocket live stats
+  nfw.ws.on('stats', (d) => {
+    document.getElementById('s-cpu').textContent = (d.cpu_pct ?? 0).toFixed(1);
+    document.getElementById('s-mem').textContent = fmtBytes((d.mem_used ?? 0) * 1024);
+    document.getElementById('s-mem-detail').textContent =
+      `${((d.mem_used / d.mem_total) * 100 || 0).toFixed(1)}% of ${fmtBytes((d.mem_total ?? 0) * 1024)}`;
+    document.getElementById('s-ct').textContent = fmtNum(d.conntrack_count ?? 0);
+    document.getElementById('s-ct-detail').textContent = `of ${fmtNum(d.conntrack_max ?? 0)} max`;
+    document.getElementById('cpu-max').textContent = `${(d.cpu_pct ?? 0).toFixed(0)}%`;
+    charts.cpu.push(d.cpu_pct ?? 0);
+  });
+  nfw.ws.connect();
+});
+
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function fmtBytes(b) {
+  if (!b) return '0 B';
+  const u = ['B','KB','MB','GB','TB'];
+  let i = 0; while (b >= 1024 && i < u.length-1) { b /= 1024; i++; }
+  return b.toFixed(i === 0 ? 0 : 1) + ' ' + u[i];
+}
+function fmtNum(n) { return (n ?? 0).toLocaleString(); }
+function fmtUptime(s) {
+  s = Math.floor(s || 0);
+  const d = Math.floor(s / 86400); s %= 86400;
+  const h = Math.floor(s / 3600);   s %= 3600;
+  const m = Math.floor(s / 60);
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+</script>
+{% endblock %}
