@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 import secrets
 import time
 from dataclasses import dataclass, asdict
@@ -48,7 +49,11 @@ def _new_revision_id() -> str:
 
 
 def _atomic_write(path: Path, data: bytes, mode: int = 0o600) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    # Unique tmp per call: configd runs each peer connection in its own
+    # thread, and two concurrent staging calls used to collide on the same
+    # .tmp path, producing FileNotFoundError from os.replace() when one
+    # thread consumed the other's tmp.
+    tmp = path.parent / f"{path.name}.tmp.{os.getpid()}.{threading.get_ident()}"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
     try:
         with os.fdopen(fd, "wb") as f:
@@ -103,7 +108,15 @@ def _active_revision() -> str | None:
     return _read_json(ACTIVE)["revision"]
 
 
+_STAGE_LOCK = threading.RLock()
+
+
 def stage(cfg: dict[str, Any], author: str) -> str:
+    with _STAGE_LOCK:
+        return _stage_locked(cfg, author)
+
+
+def _stage_locked(cfg: dict[str, Any], author: str) -> str:
     _ensure_dirs()
 
     # Normalize older configurations with the current schema defaults
