@@ -93,6 +93,19 @@ async def health():
     return {"ok": True, "version": __version__}
 
 
+@app.exception_handler(FileNotFoundError)
+async def missing_binary_handler(request: Request, exc: FileNotFoundError):
+    """Any route that shells out to a missing binary returns a clear 503
+    instead of a 500 stack trace. Tells the user what to install."""
+    binary = getattr(exc, "filename", None) or str(exc)
+    logging.warning("missing binary in route %s: %s", request.url.path, binary)
+    return JSONResponse(
+        {"detail": f"required binary not found: {binary}. "
+                   f"Install it with apt-get."},
+        status_code=503,
+    )
+
+
 @app.exception_handler(Exception)
 async def unhandled(request: Request, exc: Exception):
     logging.exception("unhandled error in API")
