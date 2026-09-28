@@ -92,6 +92,13 @@ echo "Portal:"
 check "portal login page reachable"  bash -c "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/ | grep -q '^200$'"
 check "CPD handler redirects unauth" bash -c "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/hotspot-detect.html | grep -q '302'"
 
+echo "Required binaries:"
+for _bin in wg openvpn swanctl ipsec suricata haproxy squid \
+            radmin miniupnpd unbound snmpd softflowd \
+            tcpdump rrdtool nft chronyc dhcpd dig; do
+    check "$_bin present" bash -c "command -v $_bin >/dev/null 2>&1"
+done
+
 echo "=============================================================="
 printf "  PASS: \033[32m%d\033[0m   FAIL: \033[31m%d\033[0m\n" "$PASS" "$FAIL"
 echo "=============================================================="
