@@ -20,6 +20,17 @@ def _active_config() -> dict:
     return cfg_store.read()
 
 
+def _effective_config() -> dict:
+    """Read config for form display / test actions — prefer staging so the
+    GUI reflects what was just saved. Auth enforcement paths (login, ACL
+    check) stay on _active_config() so half-staged auth changes cannot
+    lock a user out."""
+    staged = cfg_store.get_staging()
+    return dict(staged if staged is not None else cfg_store.read())
+
+
+
+
 def _oauth(cfg: dict) -> dict:
     return cfg.setdefault("auth", {}).setdefault("oauth", {"enabled": False, "providers": []})
 
@@ -36,7 +47,7 @@ def _unmask(new: str, old: str) -> str:
 
 @action("auth.oauth.get")
 def oauth_get(_data):
-    cfg = _active_config()
+    cfg = _effective_config()
     o = _oauth(cfg)
     provs = []
     for p in o.get("providers", []) or []:
@@ -51,7 +62,7 @@ def oauth_set(data):
     o = data.get("oauth") or {}
     if not isinstance(o, dict):
         raise ValueError("missing oauth")
-    cfg = _active_config()
+    cfg = _effective_config()
     cur = _oauth(cfg)
     # preserve secret if masked
     old_by_id = {p.get("id"): p for p in cur.get("providers", []) or []}

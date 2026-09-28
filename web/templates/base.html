@@ -34,6 +34,14 @@
 </head>
 <body>
 {% include "partials/header.html" %}
+{% if has_staging %}
+<div id="staging-banner" style="background:#b78103;color:#fff;padding:6px 16px;
+     font-size:13px;text-align:center;font-weight:500">
+  ⚠ Uncommitted configuration changes —
+  <a href="/config" style="color:#fff;text-decoration:underline;font-weight:600">
+    Review &amp; Commit →</a>
+</div>
+{% endif %}
 <div class="layout">
   {% include "partials/sidebar.html" %}
   <main class="content">

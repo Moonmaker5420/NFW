@@ -23,6 +23,17 @@ def _active_config() -> dict:
     return cfg_store.read()
 
 
+def _effective_config() -> dict:
+    """Read config for form display / test actions — prefer staging so the
+    GUI reflects what was just saved. Auth enforcement paths (login, ACL
+    check) stay on _active_config() so half-staged auth changes cannot
+    lock a user out."""
+    staged = cfg_store.get_staging()
+    return dict(staged if staged is not None else cfg_store.read())
+
+
+
+
 def _auth(cfg: dict) -> dict:
     return cfg.setdefault("auth", {
         "providers": [
@@ -53,7 +64,7 @@ def _unmask(new: str, old: str) -> str:
 # =============================================================================
 @action("auth.config.get")
 def auth_config_get(_data):
-    cfg = _active_config()
+    cfg = _effective_config()
     a = _auth(cfg)
     ldap = dict(a.get("ldap") or {})
     radius = dict(a.get("radius") or {})
@@ -69,7 +80,7 @@ def auth_config_get(_data):
 
 @action("auth.config.set")
 def auth_config_set(data):
-    cfg = _active_config()
+    cfg = _effective_config()
     a = _auth(cfg)
 
     # providers list — clean and store
@@ -131,14 +142,14 @@ def auth_config_set(data):
 @action("auth.ldap.test")
 def auth_ldap_test(_data):
     from modules.auth.ldap_auth import test_bind
-    cfg = _active_config()
+    cfg = _effective_config()
     return test_bind(cfg)
 
 
 @action("auth.radius.test")
 def auth_radius_test(_data):
     from modules.auth.radius_auth import test_reachability
-    cfg = _active_config()
+    cfg = _effective_config()
     return test_reachability(cfg)
 
 

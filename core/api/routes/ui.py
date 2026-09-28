@@ -1,6 +1,7 @@
 """UI page routes — serve Jinja2 templates (Phase 4 adds firewall pages)."""
 from __future__ import annotations
 
+import os
 import socket
 from pathlib import Path
 
@@ -22,6 +23,10 @@ def _ctx(request: Request, user: Session, **extra) -> dict:
         "user": {"username": user.username, "role": user.role},
         "hostname": socket.gethostname(),
         "version": __version__,
+        # True whenever a staged (uncommitted) config exists. base.html
+        # shows a banner so the user knows changes are pending — without
+        # it, staging-aware forms look like they silently didn't save.
+        "has_staging": os.path.exists("/var/lib/nfw/config/staging.json"),
     }
     ctx.update(extra)
     return ctx
