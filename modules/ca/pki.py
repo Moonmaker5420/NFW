@@ -192,6 +192,28 @@ def _cert_load(path: Path) -> x509.Certificate:
 # ---------------------------------------------------------------------------
 # Status
 # ---------------------------------------------------------------------------
+def _cert_time_dt(cert, which: str):
+    """Return not_before/not_after as a timezone-aware datetime.
+
+    Handles cryptography <42, where the *_utc properties don't exist and
+    the legacy properties return naive datetimes (assumed UTC).
+    """
+    import datetime as _dt
+    utc_attr = f"not_valid_{which}_utc"
+    legacy_attr = f"not_valid_{which}"
+    val = getattr(cert, utc_attr, None)
+    if val is None:
+        val = getattr(cert, legacy_attr)
+        if val.tzinfo is None:
+            val = val.replace(tzinfo=_dt.timezone.utc)
+    return val
+
+
+def _cert_time_iso(cert, which: str) -> str:
+    """Return ISO-formatted not_before/not_after from a cryptography cert."""
+    return _cert_time_dt(cert, which).isoformat()
+
+
 def status() -> dict:
     _ensure_dirs()
     out = {
@@ -209,15 +231,15 @@ def status() -> dict:
             out["root"] = {
                 "subject": r.subject.rfc4514_string(),
                 "serial": format(r.serial_number, "X"),
-                "not_before": r.not_valid_before_utc.isoformat(),
-                "not_after":  r.not_valid_after_utc.isoformat(),
+                "not_before": _cert_time_iso(r, "before"),
+                "not_after":  _cert_time_iso(r, "after"),
                 "sha256": hashlib.sha256(r.public_bytes(serialization.Encoding.DER)).hexdigest()[:16],
             }
             out["intermediate"] = {
                 "subject": i.subject.rfc4514_string(),
                 "serial": format(i.serial_number, "X"),
-                "not_before": i.not_valid_before_utc.isoformat(),
-                "not_after":  i.not_valid_after_utc.isoformat(),
+                "not_before": _cert_time_iso(i, "before"),
+                "not_after":  _cert_time_iso(i, "after"),
             }
         except Exception as e:
             out["error"] = str(e)
@@ -239,6 +261,19 @@ def status() -> dict:
 # ---------------------------------------------------------------------------
 # Init
 # ---------------------------------------------------------------------------
+def ensure_initialized(cfg: dict) -> bool:
+    """Idempotent CA init. Returns True if it initialized, False if already done.
+
+    Uses whatever is in cfg["ca"] (defaults are baked into init_ca).
+    Called by service apply paths (RADIUS, ACME, IPsec, ...) that need a
+    server cert and shouldn't make the user manually init the CA first.
+    """
+    if ROOT_CRT.exists() and INT_CRT.exists():
+        return False
+    init_ca(cfg, force=False)
+    return True
+
+
 def init_ca(cfg: dict, force: bool = False) -> dict:
     _ensure_dirs()
     c = cfg.get("ca", {}) or {}
@@ -378,7 +413,7 @@ def _subject(cfg: dict, cn: str, extra_org: bool = True) -> x509.Name:
 
 def _record_issue(serial: int, cert: x509.Certificate, filename: str,
                   subject_str: str) -> None:
-    expires = cert.not_valid_after_utc.strftime("%Y%m%d%H%M%SZ")
+    expires = _cert_time_dt(cert, "after").strftime("%Y%m%d%H%M%SZ")
     # openssl index format: STATUS EXPIRY [REVOKED] SERIAL FILENAME SUBJECT
     line = f"V\t{expires}\t\t{_serial_to_hex(serial)}\t{filename}\t{subject_str}"
     _index_append(line)
@@ -496,8 +531,8 @@ def issue(cfg: dict, data: dict) -> dict:
         "subject": subject.rfc4514_string(),
         "issuer": int_cert.subject.rfc4514_string(),
         "san": san_str,
-        "not_before": cert.not_valid_before_utc.isoformat(),
-        "not_after": cert.not_valid_after_utc.isoformat(),
+        "not_before": _cert_time_iso(cert, "before"),
+        "not_after": _cert_time_iso(cert, "after"),
         "certificate_pem": cert_pem.decode(),
         "private_key_pem": key_pem.decode(),
         "ca_chain_pem": (CERTS_DIR.parent / "ca-chain.crt").read_text(),
@@ -615,8 +650,8 @@ def sign_csr(cfg: dict, data: dict) -> dict:
         "serial": _serial_to_hex(serial),
         "subject": csr.subject.rfc4514_string(),
         "kind": kind,
-        "not_before": cert.not_valid_before_utc.isoformat(),
-        "not_after": cert.not_valid_after_utc.isoformat(),
+        "not_before": _cert_time_iso(cert, "before"),
+        "not_after": _cert_time_iso(cert, "after"),
         "certificate_pem": cert.public_bytes(serialization.Encoding.PEM).decode(),
         "ca_chain_pem": CHAIN.read_text(),
     }
@@ -646,8 +681,8 @@ def list_certs() -> dict:
                     )
                 except x509.ExtensionNotFound:
                     p["san"] = ""
-                p["not_before"] = cert.not_valid_before_utc.isoformat()
-                p["not_after"] = cert.not_valid_after_utc.isoformat()
+                p["not_before"] = _cert_time_iso(cert, "before")
+                p["not_after"] = _cert_time_iso(cert, "after")
         except Exception:
             p["error"] = "cannot read cert"
         items.append(p)
@@ -960,7 +995,7 @@ def renew_cert(cfg: dict, serial: str) -> dict:
     except x509.ExtensionNotFound:
         pass
 
-    lifetime = int((old_cert.not_valid_after_utc - old_cert.not_valid_before_utc).days) or 825
+    lifetime = int((_cert_time_dt(old_cert, "after") - _cert_time_dt(old_cert, "before")).days) or 825
 
     # Revoke old, issue new
     revoke(cfg, serial, reason="superseded")

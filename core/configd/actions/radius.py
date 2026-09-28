@@ -77,6 +77,15 @@ def _ensure_cert(cfg: dict):
     serial = rc.get("server_cert_serial") or ""
     if not serial:
         from modules.ca import pki
+        # Auto-init CA on first use. Without this, every fresh install
+        # fails with "CA not initialized — run init first" and the user
+        # has no clue the CA lives at System → Certificate Authority.
+        try:
+            if pki.ensure_initialized(cfg):
+                LOG.warning("radius: auto-initialized internal CA with defaults")
+        except Exception as e:
+            LOG.error("radius: CA auto-init failed: %s", e)
+            raise
         try:
             import socket
             host = socket.gethostname()
@@ -284,6 +293,24 @@ def _ensure_firewall_rule(cfg: dict, rc: dict) -> bool:
 
 
 @action("radius.apply")
+def _check_listen_ip_available(listen_ip: str) -> bool:
+    """True if listen_ip is assigned to some interface on this box."""
+    if not listen_ip:
+        return False
+    import subprocess as _sp
+    try:
+        r = _sp.run(["/usr/sbin/ip", "-4", "-o", "addr", "show"],
+                    capture_output=True, text=True, timeout=5)
+    except Exception:
+        return False
+    for line in r.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 4 and parts[2] == "inet":
+            if parts[3].split("/")[0] == listen_ip:
+                return True
+    return False
+
+
 def radius_apply(_data):
     cfg = _effective_config()
     rc = cfg.setdefault("services", {}).setdefault("radius_config", {})
@@ -304,6 +331,16 @@ def radius_apply(_data):
                 rc["listen_ip"] = cfg_if.get("ipv4", {}).get("address", "")
                 break
 
+    # Pre-flight: the configured listen_ip must exist on some interface,
+    # otherwise FreeRADIUS fails to bind with "Cannot assign requested
+    # address" and the user sees an opaque error.
+    if not _check_listen_ip_available(rc.get("listen_ip", "")):
+        raise RuntimeError(
+            f"RADIUS listen_ip {rc.get('listen_ip')!r} is not assigned "
+            f"to any interface. Bring up the LAN interface or change "
+            f"listen_ip in Services → RADIUS."
+        )
+
     _ensure_cert(cfg)
     if _ensure_firewall_rule(cfg, rc):
         LOG.info('injected/updated sys-radius-lan rule')
@@ -311,13 +348,27 @@ def radius_apply(_data):
     commit_result = _stage_then_commit(cfg, "radius: apply")
     written = _install_config(cfg)
 
-    # Syntax check
+    # Syntax check — best effort.
+    # configd runs with NoNewPrivileges=yes and RestrictSUIDSGID=yes,
+    # which blocks the setuid FreeRADIUS uses to drop from root to
+    # freerad. That surfaces as "Failed switching to uid freerad".
+    # It's a sandbox artifact, not a config error. Skip and let the
+    # restart below catch real syntax problems.
     r = _run(["freeradius", "-XC"], timeout=30)
     if r["rc"] != 0:
         combined = (r.get("stdout") or "") + "\n" + (r.get("stderr") or "")
-        tail = "\n".join(combined.splitlines()[-12:])
-        LOG.error("freeradius check failed (rc=%s):\n%s", r["rc"], tail)
-        raise RuntimeError(f"freeradius -XC failed:\n{tail}")
+        sandbox_blocked = (
+            "Failed switching to uid" in combined
+            or "Failed switching to gid" in combined
+            or "failed to setuid" in combined.lower()
+        )
+        if sandbox_blocked:
+            LOG.info("freeradius -XC blocked by configd sandbox; "
+                     "skipping syntax check (restart will validate)")
+        else:
+            tail = "\n".join(combined.splitlines()[-12:])
+            LOG.error("freeradius check failed (rc=%s):\n%s", r["rc"], tail)
+            raise RuntimeError(f"freeradius -XC failed:\n{tail}")
 
     _run(["systemctl", "enable", "freeradius"])
     r = _run(["systemctl", "restart", "freeradius"], timeout=30)
