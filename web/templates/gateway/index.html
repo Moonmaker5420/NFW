@@ -290,7 +290,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('apply-routes').onclick = async () => {
     try {
       const r = await nfw.api.post('/api/gateways/apply');
-      nfw.toast.ok('Routes applied (' + (r.routes?.length || 0) + ')');
+      nfw.toast.ok('Applied — ' + (r.gateways_count || 0) + ' gateways, ' + (r.groups_count || 0) + ' groups, ' + (r.routes_count || 0) + ' routes');
     } catch (e) { nfw.toast.err(e.message); }
   };
 });

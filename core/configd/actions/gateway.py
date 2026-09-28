@@ -62,6 +62,26 @@ try:
 except Exception as _e:
     LOG.warning("gateway monitor failed to start: %s", _e)
 
+# ---- Gateway reconciler -----------------------------------------------
+# Watches monitor status and swaps the default route when the active
+# failover member changes. Safe by default: no-op when no group exists,
+# no-op when no member is up, no-op when the disable file exists.
+from modules.gateway import reconciler as gw_reconciler
+
+
+def _full_effective_config() -> dict:
+    from config import store as _st
+    staged = _st.get_staging()
+    return dict(staged if staged is not None else _st.read())
+
+
+try:
+    gw_reconciler.start(_full_effective_config, gw_monitor.get_status)
+    LOG.info("gateway reconciler started at module import")
+except Exception as _e:
+    LOG.warning("gateway reconciler failed to start: %s", _e)
+# ---- /Gateway reconciler ----------------------------------------------
+
 
 
 
@@ -413,4 +433,27 @@ def gw_apply(data):
                        capture_output=True, text=True)
         results.append({"route": r.get("id"), "ok": True, "dst": dst, "gw": gw_ip})
 
-    return {"applied": True, "routes": results}
+    result = {
+        "applied": True,
+        "routes": results,
+        "routes_count": len(results),
+        "gateways_count": len(gateways),
+        "groups_count": len(_get_groups(cfg)),
+    }
+
+    # Commit staging now that routes are applied. Without this, gateway
+    # add/update/delete stay in staging.json and never reach active.json
+    # — the GUI table shows the new state but store.read() returns the
+    # old config, so every page refresh reverts to the previous state.
+    try:
+        staged = cfg_store.get_staging()
+        if staged is not None:
+            info = cfg_store.commit(
+                author=(data or {}).get("author") or "unknown",
+                message="gateway apply",
+            )
+            result["revision"] = info.revision
+    except Exception as e:
+        LOG.error("gateway.apply: commit failed: %s", e)
+
+    return result
