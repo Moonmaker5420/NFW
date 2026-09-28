@@ -232,6 +232,27 @@ def _persist(dev: dict) -> list[str]:
     return paths
 
 
+def _persisted_names() -> set[str]:
+    """Names of advanced interfaces we previously persisted.
+
+    Derived from 50-nfw-*.{netdev,network} files in NETWORK_DIR. Used to
+    reconcile runtime state: apply() must delete every live device we own,
+    including ones removed from the config since the last apply.
+    """
+    out: set[str] = set()
+    if not os.path.isdir(NETWORK_DIR):
+        return out
+    for fn in os.listdir(NETWORK_DIR):
+        if not fn.startswith(OUR_PREFIX):
+            continue
+        rest = fn[len(OUR_PREFIX):]
+        for suffix in (".netdev", ".network"):
+            if rest.endswith(suffix):
+                out.add(rest[: -len(suffix)])
+                break
+    return out
+
+
 def _clean_our_files() -> list[str]:
     """Remove only files WE created (50-nfw-*)."""
     removed = []
@@ -265,12 +286,22 @@ def apply(config: dict) -> dict:
     persist_paths: list[str] = []
     errors: list[dict] = []
 
-    # Step 1: delete previous advanced interfaces
-    for dev in ifaces:
+    # Step 1: reconcile live state. Delete every advanced interface we
+    # own — both those still wanted (so they get recreated cleanly) and
+    # those removed from the config since the last apply. The old code
+    # only iterated the current config, so removing the LAST advanced
+    # interface left its runtime device up: the loop had nothing to
+    # delete, and _clean_our_files() only touches the on-disk files.
+    wanted = {_safe(d.get("name", "")) for d in ifaces if d.get("name")}
+    previous = _persisted_names()
+    removed: list[str] = []
+    for name in (previous | wanted):
         try:
-            _live_delete(dev)
+            _live_delete({"name": name})
         except Exception:
             pass
+        if name not in wanted:
+            removed.append(name)
 
     # Step 2: clean only our persisted files
     _clean_our_files()
@@ -288,6 +319,7 @@ def apply(config: dict) -> dict:
     return {
         "live": live_results,
         "persisted": persist_paths,
+        "removed": removed,
         "errors": errors,
     }
 
