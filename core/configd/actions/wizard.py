@@ -49,7 +49,6 @@ def wizard_status(_data: dict[str, Any]) -> dict[str, Any]:
     return {"pending": os.path.exists(MARKER)}
 
 
-@action("wizard.complete")
 def _update_etc_hosts(hostname: str) -> None:
     """Ensure /etc/hosts has a 127.0.1.1 entry for the new hostname.
 
@@ -67,15 +66,14 @@ def _update_etc_hosts(hostname: str) -> None:
             if not _re.match(r'^127\.0\.1\.1\s', ln)]
     kept.append(f"127.0.1.1\t{hostname}\n")
     try:
-        tmp = path + ".tmp"
-        with open(tmp, "w") as f:
+        with open(path, "w") as f:
             f.writelines(kept)
-        os.chmod(tmp, 0o644)
-        os.replace(tmp, path)
+        os.chmod(path, 0o644)
     except OSError as e:
         LOG.warning("wizard: /etc/hosts update failed: %s", e)
 
 
+@action("wizard.complete")
 def wizard_complete(data: dict[str, Any]) -> dict[str, Any]:
     """Finalize first-run setup.
 

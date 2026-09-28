@@ -45,7 +45,10 @@ async def wizard_complete(body: CompleteBody,
         r = await configd_call("wizard.complete", body.model_dump(), timeout=30.0)
     except ConfigdError as e:
         raise HTTPException(status_code=500, detail=str(e))
-    if not r.get("ok"):
-        raise HTTPException(status_code=400,
-                            detail=r.get("error", "setup failed"))
+    if not isinstance(r, dict) or not r.get("ok"):
+        if isinstance(r, dict):
+            detail = r.get("error", "setup failed")
+        else:
+            detail = "configd returned no response"
+        raise HTTPException(status_code=400, detail=detail)
     return r
