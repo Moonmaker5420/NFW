@@ -111,6 +111,15 @@ async def user_2fa_enable(username: str, body: dict = Body(...),
                      {"username": username, "code": body.get("code")})
 
 
+@router.post("/{username}/2fa/cancel")
+async def user_2fa_cancel(username: str,
+                          user: Session = Depends(require_acl("readonly"))):
+    """Abort an in-progress 2FA enrollment (clears pending secret)."""
+    if username != user.username and user.role != "admin":
+        raise HTTPException(status_code=403, detail="admin required")
+    return await _cd("users.totp.cancel", {"username": username})
+
+
 @router.post("/{username}/2fa/disable")
 async def user_2fa_disable(username: str,
                            user: Session = Depends(require_acl("readonly"))):

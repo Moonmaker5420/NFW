@@ -88,7 +88,7 @@ function render(st) {
     : (st.has_pending
         ? '<span class="badge warn">enrollment in progress</span> — enter the code to finish'
         : '<span class="badge">not enabled</span>');
-  document.getElementById('setup-card').style.display = (on || st.has_pending) ? 'none' : '';
+  document.getElementById('setup-card').style.display = (!on && st.has_pending) ? '' : 'none';
   document.getElementById('disable-card').style.display = on ? '' : 'none';
   document.getElementById('regen-card').style.display = on ? '' : 'none';
 }
@@ -111,8 +111,12 @@ async function startSetup() {
 document.addEventListener('DOMContentLoaded', async () => {
   await load();
   const st = await nfw.api.get(`/api/users/${encodeURIComponent(ME)}/2fa`).catch(()=>null);
-  if (st && !st.enabled && !st.has_pending) {
-    // don't auto-start; wait for user to click Enable
+  if (!st) return;
+  if (st.has_pending) {
+    // Resume an in-progress enrollment. users.totp.setup is idempotent,
+    // so this returns the same secret that was already stored — safe.
+    await startSetup();
+  } else if (!st.enabled) {
     const btn = document.createElement('button');
     btn.className = 'primary';
     btn.textContent = 'Enable 2FA';
@@ -134,9 +138,15 @@ document.getElementById('enable-btn').onclick = async () => {
   } catch (e) { nfw.toast.err(e.message); }
 };
 
-document.getElementById('cancel-setup').onclick = () => {
-  document.getElementById('setup-card').style.display = 'none';
-  load();
+document.getElementById('cancel-setup').onclick = async () => {
+  try {
+    await nfw.api.post(`/api/users/${encodeURIComponent(ME)}/2fa/cancel`);
+    document.getElementById('setup-card').style.display = 'none';
+    document.getElementById('status').innerHTML =
+      '<span class="badge">not enabled</span>';
+    nfw.toast.ok('Enrollment cancelled');
+    await load();
+  } catch (e) { nfw.toast.err(e.message); }
 };
 
 document.getElementById('copy-codes').onclick = () => {

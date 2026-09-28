@@ -225,7 +225,16 @@ def users_totp_setup(data):
     if rec.get("totp_enabled"):
         raise ValueError("2FA is already enabled for this user")
 
-    secret = _pyotp.random_base32()
+    # Idempotent: reuse the existing pending secret if one is stored.
+    # Otherwise a page refresh would generate a new secret and invalidate
+    # the user's authenticator entry mid-enrollment.
+    secret = rec.get("totp_pending_secret")
+    if not secret:
+        secret = _pyotp.random_base32()
+        rec["totp_pending_secret"] = secret
+        users[username] = rec
+        _write(users)
+
     totp = _pyotp.TOTP(secret)
     uri = totp.provisioning_uri(name=username, issuer_name="NFW Firewall")
 
@@ -234,11 +243,6 @@ def users_totp_setup(data):
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-
-    # Store the secret as pending — not yet enabled
-    rec["totp_pending_secret"] = secret
-    users[username] = rec
-    _write(users)
 
     return {
         "username": username,
@@ -288,6 +292,27 @@ def users_totp_enable(data):
         "enabled": True,
         "recovery_codes": codes,
     }
+
+
+@action("users.totp.cancel")
+def users_totp_cancel(data):
+    """Abort a pending 2FA enrollment. Clears totp_pending_secret.
+
+    Refuses if 2FA is already enabled — use users.totp.disable instead.
+    """
+    username = data.get("username")
+    if not isinstance(username, str):
+        raise ValueError("missing username")
+    users = _read()
+    rec = users.get(username)
+    if rec is None:
+        raise ValueError("user not found")
+    if rec.get("totp_enabled"):
+        raise ValueError("2FA is already enabled — use disable instead")
+    rec.pop("totp_pending_secret", None)
+    users[username] = rec
+    _write(users)
+    return {"username": username, "cancelled": True}
 
 
 @action("users.totp.disable")
