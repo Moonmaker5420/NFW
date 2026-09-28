@@ -606,13 +606,19 @@ else
     die "no wheels found at $INSTALL_DIR/wheels — cannot build offline venv"
 fi
 
-# pyrad for system python3 (configd RADIUS actions)
-if ! python3 -c 'import pyrad' 2>/dev/null; then
-    log "installing pyrad for system python3..."
-    python3 -m pip install --quiet --break-system-packages \
-        --no-index --find-links="$INSTALL_DIR/wheels" pyrad || \
-        ylw "pyrad install failed; RADIUS client feature will not work"
-fi
+# system-python deps for configd (runs /usr/bin/python3, not the venv).
+# pyrad  -> RADIUS client
+# pyotp  -> TOTP 2FA
+# qrcode -> QR for 2FA enrollment
+# pillow -> qrcode image backend
+for _sp in pyrad pyotp qrcode pillow; do
+    if ! python3 -c "import ${_sp}" 2>/dev/null; then
+        log "installing ${_sp} for system python3..."
+        python3 -m pip install --quiet --break-system-packages \
+            --no-index --find-links="$INSTALL_DIR/wheels" "${_sp}" || \
+            ylw "${_sp} install failed; dependent feature will not work"
+    fi
+done
 
 # ==========================================================================
 # 8. Bootstrap TLS cert
