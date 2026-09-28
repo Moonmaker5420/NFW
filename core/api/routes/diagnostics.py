@@ -24,6 +24,12 @@ async def _cd(action: str, data: dict[str, Any] | None = None, timeout: float = 
         raise HTTPException(status_code=502, detail=f"configd: {e}")
 
 
+# --- Interfaces (for the packet-capture interface dropdown) ---
+@router.get("/interfaces")
+async def list_interfaces(user: Session = Depends(require_acl("readonly"))):
+    return await _cd("network.interfaces", timeout=10)
+
+
 # --- Ping / traceroute / dns ---
 @router.get("/ping")
 async def ping(target: str = Query(...), count: int = Query(4),
