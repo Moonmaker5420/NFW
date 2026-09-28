@@ -105,4 +105,30 @@ def preview_advanced(_data):
 @action("interfaces.advanced.apply")
 def apply_advanced(data):
     cfg = _eff()
-    return adv.apply(cfg)
+    result = adv.apply(cfg)
+
+    # adv.apply returns {"persisted": [...], "live": [...], "errors": [...]}.
+    # The GUI reads `written`. Provide both keys for compatibility.
+    if isinstance(result, dict) and "written" not in result:
+        result["written"] = result.get("persisted", [])
+
+    # Commit staging now that files have been written. Without this,
+    # active.json keeps the old config, the GUI table shows the previous
+    # state on next reload, and the config store drifts from the actual
+    # networkd files on disk. commit_after_apply.
+    try:
+        staged = cfg_store.get_staging()
+        if staged is not None:
+            info = cfg_store.commit(
+                author=(data or {}).get("author") or "unknown",
+                message="advanced interfaces apply",
+            )
+            if isinstance(result, dict):
+                result["revision"] = info.revision
+    except Exception as e:
+        # Don't fail the whole apply if commit fails — the files are
+        # already written and networkd already loaded them. Log loudly
+        # so it shows up in journal.
+        LOG.error("apply_advanced: commit failed: %s", e)
+
+    return result

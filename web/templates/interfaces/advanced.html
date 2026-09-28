@@ -272,7 +272,7 @@
             r.errors.forEach(function (e) { nfw.toast.err(e.device + ': ' + e.error); });
           } else {
             var n = (r.written || []).length;
-            nfw.toast.ok('Applied (' + n + ' files written)');
+            nfw.toast.ok('Applied (' + n + ' interface' + (n === 1 ? '' : 's') + ')');
           }
           load();
         })
