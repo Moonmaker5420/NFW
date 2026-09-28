@@ -842,6 +842,7 @@ if [ "$MODE" = "fresh" ]; then
     echo "    HTTPS health: $HTTPS_OK"
     echo
     echo "  Log file:     $LOG_FILE"
+echo "  Recovery CLI: sudo nfw-cli (see: nfw-cli help)"
     echo "  Install dir:  $INSTALL_DIR"
     echo
     echo "  Your browser will warn about the self-signed certificate."

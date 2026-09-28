@@ -1,0 +1,564 @@
+#!/usr/bin/env python3
+"""
+nfw-cli — console recovery tool for NFW.
+
+Runs as root, talks to nfw-configd over the Unix socket. Use when the GUI
+is unreachable: broken firewall, wrong LAN IP, misconfigured interfaces,
+locked-out admin.
+
+For routine administration, prefer the GUI at https://<lan-ip>:8443
+"""
+from __future__ import annotations
+
+import argparse
+import datetime
+import getpass
+import json
+import os
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+
+SOCK = "/run/nfw/configd.sock"
+CONFIG_DIR = "/var/lib/nfw/config"
+
+# Try bcrypt. If not available, try re-exec with venv python.
+try:
+    import bcrypt  # type: ignore
+except ImportError:
+    _venv_py = "/opt/nfw/venv/bin/python3"
+    if os.path.exists(_venv_py) and os.path.realpath(sys.executable) != os.path.realpath(_venv_py):
+        os.execv(_venv_py, [_venv_py] + sys.argv)
+    bcrypt = None  # type: ignore
+
+
+def die(msg, code=1):
+    print(f"error: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def call(action, data=None, timeout=30):
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    try:
+        s.connect(SOCK)
+    except OSError as e:
+        raise RuntimeError(f"cannot connect to {SOCK}: {e}")
+    try:
+        payload = json.dumps({"action": action, "data": data or {}}).encode() + b"\n"
+        s.sendall(payload)
+        buf = bytearray()
+        while True:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            buf.extend(chunk)
+            if buf.endswith(b"\n"):
+                break
+        try:
+            resp = json.loads(buf.decode())
+        except Exception as e:
+            raise RuntimeError(f"invalid response from configd: {e}")
+        if not resp.get("ok"):
+            raise RuntimeError(resp.get("error", "configd error"))
+        return resp.get("result")
+    finally:
+        try:
+            s.close()
+        except OSError:
+            pass
+
+
+def _require_root():
+    if os.geteuid() != 0:
+        die("nfw-cli must be run as root (try: sudo nfw-cli ...)")
+
+
+def _require_configd():
+    if not os.path.exists(SOCK):
+        die(f"configd socket {SOCK} not found — is nfw-configd running?\n"
+            f"  systemctl status nfw-configd\n"
+            f"  journalctl -u nfw-configd -n 50")
+
+
+def _print_json(obj):
+    print(json.dumps(obj, indent=2, sort_keys=True))
+
+
+def _confirm(prompt="Type 'yes' to continue: "):
+    return input(prompt).strip() == "yes"
+
+
+# ---------------------------------------------------------------------------
+def cmd_status(args):
+    _require_configd()
+    print("=== services ===")
+    for svc in ("nfw-configd", "nfw-api", "nfw-portal"):
+        try:
+            r = subprocess.run(["systemctl", "is-active", svc],
+                               capture_output=True, text=True, timeout=5)
+            state = r.stdout.strip() or "unknown"
+        except Exception:
+            state = "unknown"
+        mark = "OK " if state == "active" else "!! "
+        print(f"  {mark} {svc:20s} {state}")
+
+    print("\n=== interfaces ===")
+    try:
+        r = call("network.assignments")
+        net = (r or {}).get("network") or {}
+        print(f"  WAN: {net.get('wan') or '(unassigned)'}")
+        print(f"  LAN: {net.get('lan') or '(unassigned)'}")
+        print()
+        devs = (r or {}).get("devices") or []
+        for d in devs:
+            name = d.get("name", "?")
+            state = d.get("state", "?")
+            addrs = d.get("addrs") or []
+            astr = ", ".join(
+                f"{a.get('address')}/{a.get('prefixlen')}"
+                for a in addrs if a.get("address")
+            ) or "—"
+            print(f"  {name:12s} {state:8s} {astr}")
+    except Exception as e:
+        print(f"  error: {e}")
+
+    print("\n=== API health ===")
+    try:
+        r = subprocess.run(
+            ["curl", "-sk", "--max-time", "5",
+             "https://127.0.0.1:8443/api/health"],
+            capture_output=True, text=True, timeout=10)
+        print(f"  {r.stdout.strip() or '(no response)'}")
+    except Exception as e:
+        print(f"  error: {e}")
+
+
+def cmd_service_list(args):
+    for u in ("nfw-configd", "nfw-api", "nfw-portal",
+              "nfw-fix-nfw-perms", "nfw-fix-ca-perms"):
+        try:
+            r = subprocess.run(["systemctl", "is-active", u],
+                               capture_output=True, text=True, timeout=5)
+            print(f"  {u:22s} {r.stdout.strip() or 'unknown'}")
+        except Exception:
+            print(f"  {u:22s} error")
+
+
+def cmd_service_restart(args):
+    name = args.name
+    if not name.startswith("nfw-"):
+        name = "nfw-" + name
+    print(f"restarting {name}...")
+    r = subprocess.run(["systemctl", "restart", name],
+                       capture_output=True, text=True, timeout=30)
+    if r.returncode != 0:
+        die(f"restart failed: {r.stderr.strip()}")
+    r = subprocess.run(["systemctl", "is-active", name],
+                       capture_output=True, text=True, timeout=5)
+    print(f"  {name}: {r.stdout.strip()}")
+
+
+# ---------------------------------------------------------------------------
+def cmd_interface_list(args):
+    _require_configd()
+    try:
+        r = call("network.assignments")
+    except Exception as e:
+        die(f"cannot read assignments: {e}")
+    net = r.get("network") or {}
+    resolved = r.get("resolved") or {}
+    print(f"  WAN: {net.get('wan') or resolved.get('wan') or '(unassigned)'}")
+    print(f"  LAN: {net.get('lan') or resolved.get('lan') or '(unassigned)'}")
+    print()
+    devs = r.get("devices") or []
+    if devs:
+        print(f"  {'NAME':12s} {'STATE':8s} {'MAC':20s} ADDRESS")
+        for d in devs:
+            name = d.get("name", "?")
+            state = d.get("state", "?")
+            mac = d.get("mac", "")
+            addrs = d.get("addrs") or []
+            astr = ", ".join(
+                f"{a.get('address')}/{a.get('prefixlen')}"
+                for a in addrs if a.get("address")
+            ) or "—"
+            print(f"  {name:12s} {state:8s} {mac:20s} {astr}")
+
+
+def cmd_interface_set(args):
+    _require_configd()
+    role = args.role.lower()
+    iface = args.iface
+    try:
+        r = call("network.assignments")
+    except Exception as e:
+        die(f"cannot read assignments: {e}")
+    net = dict(r.get("network") or {})
+    if role == "wan":
+        net["wan"] = iface
+    else:
+        net["lan"] = iface
+    net.setdefault("opt", [])
+    if net.get("wan") == net.get("lan"):
+        die(f"WAN and LAN cannot both be {iface}")
+    print(f"setting {role} -> {iface}")
+    try:
+        res = call("network.apply_assignment",
+                   {"network": net, "author": "nfw-cli"})
+    except Exception as e:
+        die(f"apply failed: {e}")
+    print(f"  revision: {res.get('revision')}")
+    print(f"  applied:  {res.get('applied')}")
+    if res.get("apply_error"):
+        print(f"  error:    {res['apply_error']}")
+
+
+def cmd_lan_ip(args):
+    _require_configd()
+    cidr = args.cidr
+    if "/" not in cidr:
+        die("expected <ip>/<prefix>, e.g. 192.168.10.1/24")
+    addr, plen = cidr.split("/", 1)
+    try:
+        plen_i = int(plen)
+    except ValueError:
+        die("invalid prefix length")
+    if not (1 <= plen_i <= 32):
+        die("prefix must be 1-32")
+
+    try:
+        r = call("network.assignments")
+    except Exception as e:
+        die(f"cannot read assignments: {e}")
+    net = r.get("network") or {}
+    lan = net.get("lan")
+    if not lan or lan == "auto":
+        die("LAN interface not assigned — run: nfw-cli interface set lan <iface>")
+
+    print(f"setting LAN {lan} -> {addr}/{plen_i}")
+    try:
+        call("network.iface.set", {
+            "device": lan,
+            "config": {
+                "ipv4": {"mode": "static", "address": addr, "prefixlen": plen_i},
+                "ipv6": {"mode": "none"},
+            },
+            "author": "nfw-cli",
+        })
+        res = call("network.iface.apply", {"author": "nfw-cli"})
+    except Exception as e:
+        die(f"apply failed: {e}")
+    print("  ok")
+    _print_json(res)
+
+
+# ---------------------------------------------------------------------------
+def cmd_firewall_apply(args):
+    _require_configd()
+    print("applying firewall from current config...")
+    try:
+        res = call("firewall.apply_staged", {})
+    except Exception as e:
+        die(f"apply failed: {e}")
+    print(f"  applied:  {res.get('applied')}")
+    print(f"  bytes:    {res.get('bytes')}")
+    print(f"  revision: {res.get('revision')}")
+
+
+def cmd_firewall_show(args):
+    try:
+        r = subprocess.run(["nft", "list", "ruleset"],
+                           capture_output=True, text=True, timeout=10)
+    except Exception as e:
+        die(f"nft failed: {e}")
+    showing = False
+    for ln in r.stdout.splitlines():
+        if ln.startswith("table"):
+            showing = ("nfw_filter" in ln or "nfw_nat" in ln)
+        if showing:
+            print(ln)
+
+
+def cmd_firewall_disable(args):
+    _require_configd()
+    print("!! PANIC: disabling firewall !!!")
+    print("   Policy will be set to ACCEPT — all traffic passes.")
+    print("   Re-enable with: nfw-cli firewall apply")
+    print()
+    if not _confirm():
+        die("aborted", 2)
+    minimal = (
+        "# NFW — panic mode, loaded by nfw-cli firewall disable\n"
+        "flush ruleset\n"
+        "table inet filter {\n"
+        "  chain input { type filter hook input priority filter; policy accept; }\n"
+        "  chain forward { type filter hook forward priority filter; policy accept; }\n"
+        "  chain output { type filter hook output priority filter; policy accept; }\n"
+        "}\n"
+    )
+    with tempfile.NamedTemporaryFile("w", suffix=".nft", delete=False) as f:
+        f.write(minimal)
+        path = f.name
+    try:
+        r = subprocess.run(["nft", "-f", path],
+                           capture_output=True, text=True, timeout=10)
+        if r.returncode != 0:
+            die(f"nft load failed: {r.stderr.strip()}")
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    print("firewall disabled (policy accept)")
+    print("NOTE: /etc/nftables.conf is unchanged. A reboot or")
+    print("      `systemctl restart nftables` will reapply the real rules.")
+
+
+# ---------------------------------------------------------------------------
+def cmd_config_show(args):
+    path = os.path.join(CONFIG_DIR, "active.json")
+    if not os.path.exists(path):
+        die(f"{path} not found")
+    active = json.load(open(path))
+    rev = active.get("revision", "")
+    rev_path = os.path.join(CONFIG_DIR, "revisions", f"{rev}.json")
+    if not os.path.exists(rev_path):
+        die(f"active revision file {rev_path} not found")
+    print(f"# revision: {rev}")
+    print(open(rev_path).read())
+
+
+def cmd_config_revisions(args):
+    rev_dir = os.path.join(CONFIG_DIR, "revisions")
+    if not os.path.isdir(rev_dir):
+        die(f"{rev_dir} not found")
+    entries = []
+    for name in os.listdir(rev_dir):
+        if not name.endswith(".json"):
+            continue
+        path = os.path.join(rev_dir, name)
+        entries.append((os.path.getmtime(path), name[:-5]))
+    entries.sort(reverse=True)
+    active = json.load(open(os.path.join(CONFIG_DIR, "active.json")))
+    cur = active.get("revision", "")
+    for mtime, rev in entries[:40]:
+        when = datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
+        mark = " (active)" if rev == cur else ""
+        print(f"  {when}  {rev}{mark}")
+
+
+def cmd_config_rollback(args):
+    rev = args.revision
+    rev_path = os.path.join(CONFIG_DIR, "revisions", f"{rev}.json")
+    if not os.path.exists(rev_path):
+        die(f"revision {rev} not found")
+    print(f"rolling back to {rev}")
+    if not _confirm():
+        die("aborted", 2)
+    active_path = os.path.join(CONFIG_DIR, "active.json")
+    with open(active_path, "w") as f:
+        json.dump({"revision": rev, "ts": int(time.time())}, f, indent=2)
+    try:
+        subprocess.run(["chown", "root:nfw", active_path], timeout=5)
+        subprocess.run(["chmod", "0640", active_path], timeout=5)
+    except Exception:
+        pass
+    print("active revision set. Restarting configd to pick it up...")
+    subprocess.run(["systemctl", "restart", "nfw-configd"], timeout=30)
+    print("done")
+
+
+# ---------------------------------------------------------------------------
+def cmd_user_list(args):
+    _require_configd()
+    r = call("users.list")
+    users = r.get("users") if isinstance(r, dict) else r
+
+    # Normalize to a list of dicts
+    if isinstance(users, dict):
+        rows = []
+        for name, rec in users.items():
+            row = dict(rec) if isinstance(rec, dict) else {}
+            row.setdefault("username", name)
+            rows.append(row)
+    elif isinstance(users, list):
+        rows = users
+    else:
+        _print_json(r)
+        return
+
+    for rec in rows:
+        name = rec.get("username", "?")
+        role = rec.get("role", "?")
+        disabled = "disabled" if rec.get("disabled") else "active"
+        print(f"  {name:20s} {role:10s} {disabled}")
+
+
+def cmd_user_reset_password(args):
+    _require_configd()
+    if bcrypt is None:
+        die("bcrypt not available (venv missing?)")
+    name = args.username
+    pw1 = getpass.getpass(f"New password for {name}: ")
+    pw2 = getpass.getpass("Confirm: ")
+    if pw1 != pw2:
+        die("passwords do not match")
+    if len(pw1) < 6:
+        die("password must be at least 6 characters")
+    h = bcrypt.hashpw(pw1.encode(), bcrypt.gensalt()).decode()
+    call("users.set_password", {"username": name, "hash": h})
+    print(f"password for {name} updated")
+
+
+# ---------------------------------------------------------------------------
+def cmd_alerts_test(args):
+    _require_configd()
+    print("sending test email...")
+    r = call("alerts.test", {})
+    if r.get("ok"):
+        print("  sent")
+    else:
+        die(f"failed: {r.get('error', 'unknown')}")
+
+
+def cmd_alerts_history(args):
+    _require_configd()
+    r = call("alerts.history", {"limit": args.limit})
+    print(f"stats: {r.get('stats')}")
+    for a in r.get("alerts", [])[:args.limit]:
+        when = datetime.datetime.fromtimestamp(a["ts"]).strftime("%Y-%m-%d %H:%M:%S")
+        print(f"  {when}  {a['event']:24s} {a['status']:10s} {a.get('error','')[:50]}")
+
+
+# ---------------------------------------------------------------------------
+def cmd_power_reboot(args):
+    _require_configd()
+    print("scheduling reboot in 5 seconds...")
+    print(f"  {call('power.reboot', {'delay_seconds': 5})}")
+
+
+def cmd_power_shutdown(args):
+    _require_configd()
+    print("scheduling shutdown in 5 seconds...")
+    print(f"  {call('power.shutdown', {'delay_seconds': 5})}")
+
+
+def cmd_power_cancel(args):
+    _require_configd()
+    print(f"  {call('power.cancel', {})}")
+
+
+# ---------------------------------------------------------------------------
+def build_parser():
+    p = argparse.ArgumentParser(
+        prog="nfw-cli",
+        description="NFW console recovery tool. Run as root.",
+        epilog="For routine administration, prefer the GUI at "
+               "https://<lan-ip>:8443",
+    )
+    sub = p.add_subparsers(dest="cmd", metavar="COMMAND")
+
+    sub.add_parser("status", help="overall health check").set_defaults(
+        func=cmd_status)
+
+    sp = sub.add_parser("service", help="manage NFW services")
+    ss = sp.add_subparsers(dest="subcmd")
+    ss.add_parser("list", help="list service states").set_defaults(
+        func=cmd_service_list)
+    sp2 = ss.add_parser("restart", help="restart a service")
+    sp2.add_argument("name")
+    sp2.set_defaults(func=cmd_service_restart)
+
+    sp = sub.add_parser("interface", help="network interface management")
+    ss = sp.add_subparsers(dest="subcmd")
+    ss.add_parser("list", help="list NICs and roles").set_defaults(
+        func=cmd_interface_list)
+    sp2 = ss.add_parser("set", help="assign WAN or LAN role")
+    sp2.add_argument("role", choices=["wan", "lan"])
+    sp2.add_argument("iface")
+    sp2.set_defaults(func=cmd_interface_set)
+
+    sp = sub.add_parser("lan-ip", help="change LAN IP (e.g. 192.168.10.1/24)")
+    sp.add_argument("cidr")
+    sp.set_defaults(func=cmd_lan_ip)
+
+    sp = sub.add_parser("firewall", help="firewall operations")
+    ss = sp.add_subparsers(dest="subcmd")
+    ss.add_parser("apply", help="reapply firewall from config").set_defaults(
+        func=cmd_firewall_apply)
+    ss.add_parser("show", help="show current nft ruleset").set_defaults(
+        func=cmd_firewall_show)
+    ss.add_parser("disable", help="PANIC — flush firewall to accept-all").set_defaults(
+        func=cmd_firewall_disable)
+
+    sp = sub.add_parser("config", help="config store operations")
+    ss = sp.add_subparsers(dest="subcmd")
+    ss.add_parser("show", help="print active config").set_defaults(
+        func=cmd_config_show)
+    ss.add_parser("revisions", help="list revisions").set_defaults(
+        func=cmd_config_revisions)
+    sp2 = ss.add_parser("rollback", help="roll back to a revision")
+    sp2.add_argument("revision")
+    sp2.set_defaults(func=cmd_config_rollback)
+
+    sp = sub.add_parser("user", help="user management")
+    ss = sp.add_subparsers(dest="subcmd")
+    ss.add_parser("list", help="list users").set_defaults(func=cmd_user_list)
+    sp2 = ss.add_parser("reset-password", help="reset a user's password")
+    sp2.add_argument("username")
+    sp2.set_defaults(func=cmd_user_reset_password)
+
+    sp = sub.add_parser("alerts", help="alert operations")
+    ss = sp.add_subparsers(dest="subcmd")
+    ss.add_parser("test", help="send a test email").set_defaults(
+        func=cmd_alerts_test)
+    sp2 = ss.add_parser("history", help="show recent alert history")
+    sp2.add_argument("--limit", type=int, default=20)
+    sp2.set_defaults(func=cmd_alerts_history)
+
+    sp = sub.add_parser("power", help="power operations")
+    ss = sp.add_subparsers(dest="subcmd")
+    ss.add_parser("reboot", help="reboot in 5 seconds").set_defaults(
+        func=cmd_power_reboot)
+    ss.add_parser("shutdown", help="shut down in 5 seconds").set_defaults(
+        func=cmd_power_shutdown)
+    ss.add_parser("cancel", help="cancel a pending power action").set_defaults(
+        func=cmd_power_cancel)
+
+    return p
+
+
+def main(argv=None):
+    _require_root()
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if not hasattr(args, "func"):
+        parser.print_help()
+        print()
+        print("Common recovery scenarios:")
+        print("  nfw-cli status                        # is everything up?")
+        print("  nfw-cli interface list                # check NIC roles")
+        print("  nfw-cli interface set lan enp2s0      # fix LAN assignment")
+        print("  nfw-cli lan-ip 192.168.10.1/24        # change LAN IP")
+        print("  nfw-cli firewall apply                # reapply rules")
+        print("  nfw-cli firewall disable              # PANIC — accept all")
+        print("  nfw-cli config revisions              # list revisions")
+        print("  nfw-cli config rollback <rev>         # undo last change")
+        print("  nfw-cli user reset-password admin     # recover admin")
+        return 2
+
+    try:
+        return args.func(args) or 0
+    except KeyboardInterrupt:
+        print("\naborted", file=sys.stderr)
+        return 130
+    except RuntimeError as e:
+        die(str(e))
+
+
+if __name__ == "__main__":
+    sys.exit(main())
