@@ -274,11 +274,38 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 log "installing system dependencies..."
 apt-get update -qq
+# Core + service dependencies. Grouped by purpose for readability.
+# NOTE: several of these are heavyweight (suricata, squid, freeradius,
+# strongswan). Installing them all unconditionally is a known compromise
+# — future versions should move to on-demand installation when a service
+# is enabled from the GUI.
 apt-get install -y -qq \
+    \
+    `# --- Core ---` \
     python3 python3-venv python3-pip python3-bcrypt rsync \
-    nftables rrdtool openssl chrony jq whiptail socat \
-    isc-dhcp-server bind9-dnsutils conntrack \
-    kmod procps psmisc curl ca-certificates \
+    kmod procps psmisc curl wget ca-certificates jq \
+    openssl whiptail socat nftables rrdtool conntrack \
+    \
+    `# --- Base services ---` \
+    chrony isc-dhcp-server bind9-dnsutils unbound unbound-anchor \
+    \
+    `# --- VPN ---` \
+    wireguard wireguard-tools openvpn \
+    strongswan strongswan-swanctl strongswan-charon \
+    strongswan-libcharon strongswan-starter \
+    \
+    `# --- Security ---` \
+    suricata suricata-update \
+    \
+    `# --- Reverse proxy / forward proxy ---` \
+    haproxy squid \
+    \
+    `# --- Supporting services ---` \
+    miniupnpd miniupnpd-nftables snmpd softflowd \
+    freeradius freeradius-utils freeradius-ldap \
+    \
+    `# --- Diagnostics ---` \
+    tcpdump nmap \
     >/dev/null
 log "dependencies installed"
 
@@ -701,6 +728,7 @@ systemctl enable nfw-portal.service   >/dev/null 2>&1 || true
 systemctl enable nfw-sysctl.service   >/dev/null 2>&1 || true
 systemctl enable nfw-fix-ca-perms.service >/dev/null 2>&1 || true
 systemctl enable nfw-fix-nfw-perms.service >/dev/null 2>&1 || true
+systemctl enable nfw-firewall-load.service >/dev/null 2>&1 || true
 
 for t in nfw-alias-refresh nfw-ca-autorenew nfw-cp-bypass-refresh \
          nfw-cp-bytes nfw-geoip-update nfw-rrd-collector nfw-schedule-refresh; do

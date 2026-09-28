@@ -1,0 +1,18 @@
+[Unit]
+Description=Load NFW firewall rules at boot
+Documentation=man:nft(8)
+# Run before anything that could accept external traffic.
+After=local-fs.target
+Before=network-pre.target nfw-configd.service nfw-api.service nfw-portal.service
+Wants=local-fs.target
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/nfw-firewall-load.sh
+# Best-effort: don't block boot if nft fails — configd will reapply later.
+SuccessExitStatus=0
+
+[Install]
+WantedBy=sysinit.target
