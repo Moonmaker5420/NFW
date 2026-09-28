@@ -292,7 +292,6 @@ def _ensure_firewall_rule(cfg: dict, rc: dict) -> bool:
     return True
 
 
-@action("radius.apply")
 def _check_listen_ip_available(listen_ip: str) -> bool:
     """True if listen_ip is assigned to some interface on this box."""
     if not listen_ip:
@@ -311,6 +310,7 @@ def _check_listen_ip_available(listen_ip: str) -> bool:
     return False
 
 
+@action("radius.apply")
 def radius_apply(_data):
     cfg = _effective_config()
     rc = cfg.setdefault("services", {}).setdefault("radius_config", {})
