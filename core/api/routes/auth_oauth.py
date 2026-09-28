@@ -36,6 +36,21 @@ async def _cd(action: str, data: dict | None = None, timeout: float = 30.0):
         raise HTTPException(status_code=502, detail=f"configd: {e}")
 
 
+# --- admin get/set for the OAuth providers page ---
+@router.get("/api/auth/oauth/get")
+async def oauth_admin_get(user: Session = Depends(require_acl("admin"))):
+    return await _cd("auth.oauth.get")
+
+
+@router.put("/api/auth/oauth/set")
+async def oauth_admin_set(body: dict = Body(...),
+                          user: Session = Depends(require_acl("admin"))):
+    return await _cd("auth.oauth.set", {
+        "oauth": body.get("oauth") or {},
+        "author": user.username,
+    })
+
+
 # --- public list for the login page ---
 @router.get("/api/auth/oauth/providers")
 async def list_oauth_providers():
