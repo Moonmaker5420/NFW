@@ -309,6 +309,44 @@ apt-get install -y -qq \
     >/dev/null
 log "dependencies installed"
 
+# --------------------------------------------------------------------------
+# Disable optional services on fresh install.
+#
+# `apt install` auto-starts these with Debian's default config — RADIUS
+# listening with test credentials, SNMP with community "public", Unbound
+# fighting systemd-resolved for port 53. NFW enables each one through its
+# own apply path when the user turns the feature on in the GUI.
+# --------------------------------------------------------------------------
+log "disabling optional services (NFW enables them on demand)..."
+for _svc in freeradius suricata haproxy squid unbound snmpd \
+            softflowd miniupnpd strongswan-starter \
+            isc-dhcp-server isc-dhcp-server6; do
+    systemctl disable --now "${_svc}.service" 2>/dev/null || true
+done
+log "optional services disabled"
+log "optional services disabled"
+
+# systemd-resolved fights Unbound for port 53 and owns /etc/resolv.conf.
+# NFW manages DNS itself (Unbound when enabled, direct upstream otherwise).
+if systemctl is-active systemd-resolved >/dev/null 2>&1; then
+    log "disabling systemd-resolved (NFW manages DNS)"
+    systemctl disable --now systemd-resolved.service 2>/dev/null || true
+    systemctl mask systemd-resolved.service 2>/dev/null || true
+fi
+
+# Make /etc/resolv.conf a plain file with upstream nameservers so the
+# host can still resolve while Unbound isn't yet enabled.
+if [ -L /etc/resolv.conf ]; then
+    rm -f /etc/resolv.conf
+    cat > /etc/resolv.conf <<'RESOLV_EOF'
+# NFW-managed. Do not edit by hand.
+# Rewritten by: services.dns.apply
+nameserver 1.1.1.1
+nameserver 8.8.8.8
+RESOLV_EOF
+    chmod 0644 /etc/resolv.conf
+fi
+
 # Section 3 skipped on upgrade (existing config preserved)
 if [ "$MODE" = "fresh" ]; then
 # ==========================================================================
