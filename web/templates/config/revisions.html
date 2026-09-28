@@ -28,9 +28,38 @@ document.addEventListener('DOMContentLoaded', async () => {
         <td>${esc(row.author)}</td>
         <td>${esc(row.message)}</td>
         <td>${row.active ? '<span class="badge ok">active</span>' : ''}</td>
+        <td>${
+          row.active
+            ? '<button class="small" disabled title="already active">Rollback</button>'
+            : `<button class="small" data-rollback="${esc(row.revision)}" data-msg="${esc(row.message || '')}">Rollback</button>`
+        }</td>
       </tr>`).join('');
     document.getElementById('revs').innerHTML =
-      '<table class="data"><thead><tr><th>Revision</th><th>Time</th><th>Author</th><th>Message</th><th></th></tr></thead><tbody>' + html + '</tbody></table>';
+      '<table class="data"><thead><tr><th>Revision</th><th>Time</th><th>Author</th><th>Message</th><th></th><th></th></tr></thead><tbody>' + html + '</tbody></table>';
+
+    document.querySelectorAll('[data-rollback]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const rev = btn.getAttribute('data-rollback');
+        const msg = btn.getAttribute('data-msg') || '';
+        const ok = confirm(
+          'Roll back the active config to:\n\n' +
+          '  ' + rev + (msg ? '\n  ' + msg : '') + '\n\n' +
+          'This changes the running config immediately. The current ' +
+          'revision stays in history, so you can roll forward if needed.\n\n' +
+          'Continue?'
+        );
+        if (!ok) return;
+        btn.disabled = true;
+        try {
+          await nfw.api.post('/api/config/rollback', {revision: rev, reason: 'rollback via GUI'});
+          nfw.toast.ok('Rolled back to ' + rev);
+          setTimeout(() => location.reload(), 700);
+        } catch (e) {
+          btn.disabled = false;
+          nfw.toast.err(e.message);
+        }
+      });
+    });
   } catch (e) { nfw.toast.err('Failed to load revisions: ' + e.message); }
 });
 function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
