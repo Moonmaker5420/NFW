@@ -50,6 +50,32 @@ def wizard_status(_data: dict[str, Any]) -> dict[str, Any]:
 
 
 @action("wizard.complete")
+def _update_etc_hosts(hostname: str) -> None:
+    """Ensure /etc/hosts has a 127.0.1.1 entry for the new hostname.
+
+    Without this, sudo prints 'unable to resolve host <name>' on every
+    invocation after the wizard changes the hostname.
+    """
+    import re as _re
+    path = "/etc/hosts"
+    try:
+        with open(path) as f:
+            lines = f.readlines()
+    except OSError:
+        return
+    kept = [ln for ln in lines
+            if not _re.match(r'^127\.0\.1\.1\s', ln)]
+    kept.append(f"127.0.1.1\t{hostname}\n")
+    try:
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            f.writelines(kept)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
+    except OSError as e:
+        LOG.warning("wizard: /etc/hosts update failed: %s", e)
+
+
 def wizard_complete(data: dict[str, Any]) -> dict[str, Any]:
     """Finalize first-run setup.
 
@@ -116,6 +142,8 @@ def wizard_complete(data: dict[str, Any]) -> dict[str, Any]:
                        capture_output=True, timeout=5)
     except Exception as e:
         LOG.warning("wizard: hostnamectl failed: %s", e)
+
+    _update_etc_hosts(hostname)
 
     # 4. Remove marker
     try:
