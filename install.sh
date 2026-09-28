@@ -546,12 +546,13 @@ if [ -d "$INSTALL_DIR/systemd" ]; then
         [ -f "$f" ] || continue
         install -m 0644 "$f" /etc/systemd/system/
     done
-    # Drop-ins
-    if [ -d "$INSTALL_DIR/systemd/nfw-api.service.d" ]; then
-        mkdir -p /etc/systemd/system/nfw-api.service.d
-        cp -a "$INSTALL_DIR/systemd/nfw-api.service.d/." \
-              /etc/systemd/system/nfw-api.service.d/
-    fi
+    # Drop-ins (all nfw-*.service.d directories)
+    for d in "$INSTALL_DIR/systemd"/nfw-*.service.d; do
+        [ -d "$d" ] || continue
+        name=$(basename "$d")
+        mkdir -p "/etc/systemd/system/$name"
+        cp -a "$d/." "/etc/systemd/system/$name/"
+    done
 fi
 
 systemctl daemon-reload
