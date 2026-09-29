@@ -152,6 +152,12 @@ pre.code {
   width: 100%;
   padding: 20px;
   box-shadow: var(--shadow);
+  /* Cap to viewport (backdrop has 20px padding top+bottom, hence -40px)
+     and scroll internally. Without this, tall forms — like the firewall
+     rule editor — overflow the flex container and the top of the modal
+     gets pushed off-screen with no way to reach the hidden fields. */
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
 }
 .modal h2 { margin: 0 0 12px; font-size: 16px; }
 .modal .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
