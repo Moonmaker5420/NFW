@@ -37,6 +37,35 @@ curl -fsSL https://raw.githubusercontent.com/Moonmaker5420/NFW/main/install.sh |
 
 ---
 
+## Screenshots
+
+<img src="docs/screenshots/dashboard.png" alt="Dashboard — live stats, CPU/memory/conntrack, RRD history, WAN/LAN traffic graphs">
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/configuration.png" alt="Configuration — staging, commit, revisions, rollback">
+      <br><sub><b>Configuration</b> — stage, commit, browse revisions, rollback</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/vpn.png" alt="WireGuard — instance and peer management with QR export">
+      <br><sub><b>VPN</b> — WireGuard, OpenVPN, IPsec with QR-based peer export</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/diagnostic.png" alt="Diagnostics — ping, traceroute, DNS lookup, packet capture">
+      <br><sub><b>Diagnostics</b> — ping, traceroute, DNS, packet capture</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/interface.png" alt="Interfaces — WAN/LAN/OPT role assignment">
+      <br><sub><b>Interfaces</b> — WAN/LAN/OPT role assignment</sub>
+    </td>
+  </tr>
+</table>
+
+---
+
 ## Features
 
 ### Firewall
