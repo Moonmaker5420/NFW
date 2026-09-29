@@ -265,6 +265,17 @@ def dns_preview(_data):
 @action("dns.apply")
 def dns_apply(data):
     cfg = _effective_config()
+    # Regenerate the blocklist include BEFORE compiling unbound.conf.
+    # Otherwise a Save & Apply after adding a manual domain (or changing
+    # sources / whitelist) wouldn't take effect until the user also
+    # clicked the separate Refresh button. refresh() handles
+    # blocklists.enabled=False by writing an empty include.
+    try:
+        from modules.services import blocklists as _bl
+        _bl.refresh(cfg)
+    except Exception as e:
+        LOG.warning("dns_apply: blocklist refresh failed: %s", e)
+
     text = compile_unbound(cfg)
     path = "/etc/unbound/unbound.conf.d/nfw.conf"
     _atomic_write(path, text)
@@ -291,6 +302,23 @@ def dns_apply(data):
     else:
         _run(["systemctl", "stop", "unbound"])
         r = {"rc": 0}
+
+    # Apply commits staging — every other apply path (radius, advanced
+    # interfaces, gateway, captive portal) does the same. Without this,
+    # active.json stays behind and the "uncommitted changes" banner
+    # never clears after Save & Apply.
+    try:
+        staged = cfg_store.get_staging()
+        if staged is not None:
+            info = cfg_store.commit(
+                author=(data or {}).get("author") or "unknown",
+                message="dns: apply",
+            )
+            return {"applied": True, "check": v, "service": r,
+                    "revision": info.revision}
+    except Exception as e:
+        LOG.error("dns_apply: commit failed: %s", e)
+
     return {"applied": True, "check": v, "service": r}
 
 

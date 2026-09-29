@@ -73,7 +73,7 @@ CATALOG: list[dict[str, Any]] = [
      "url": "https://small.oisd.nl/",
      "description": "Curated ads + trackers + phishing. Low false-positive."},
     {"id": "hagezi-normal", "name": "Hagezi Multi-Normal",
-     "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/multi.txt",
+     "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/multi.txt",
      "description": "Balanced ad + tracker + telemetry."},
     {"id": "firebog-tick", "name": "Firebog — ticked",
      "url": "https://v.firebog.net/hosts/AdguardDNS.txt",
