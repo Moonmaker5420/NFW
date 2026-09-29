@@ -81,6 +81,16 @@
              src="/api/reporting/graph/system_conntrack.png?range=day"
              style="width:100%;display:block;margin-top:4px">
       </div>
+      <div>
+        <div class="stat-label">WAN traffic <span id="wan-iface-name" class="muted" style="font-size:11px"></span></div>
+        <img class="rgraph" id="wan-graph" data-graph=""
+             style="width:100%;display:block;margin-top:4px">
+      </div>
+      <div>
+        <div class="stat-label">LAN traffic <span id="lan-iface-name" class="muted" style="font-size:11px"></span></div>
+        <img class="rgraph" id="lan-graph" data-graph=""
+             style="width:100%;display:block;margin-top:4px">
+      </div>
     </div>
   </div>
 
@@ -103,6 +113,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('s-kernel').textContent = info.kernel;
     document.getElementById('s-load').textContent = (info.loadavg || []).join(' / ');
     document.getElementById('s-uptime').textContent = fmtUptime(info.uptime_s);
+
+    // Fill WAN / LAN traffic graphs from resolved network roles.
+    const roles = info.network_roles || {};
+    const t = Date.now();
+    if (roles.wan) {
+      document.getElementById('wan-iface-name').textContent = '(' + roles.wan + ')';
+      const el = document.getElementById('wan-graph');
+      el.setAttribute('data-graph', 'if_' + roles.wan);
+      el.src = `/api/reporting/graph/if_${roles.wan}.png?range=day&t=${t}`;
+    }
+    if (roles.lan) {
+      document.getElementById('lan-iface-name').textContent = '(' + roles.lan + ')';
+      const el = document.getElementById('lan-graph');
+      el.setAttribute('data-graph', 'if_' + roles.lan);
+      el.src = `/api/reporting/graph/if_${roles.lan}.png?range=day&t=${t}`;
+    }
   } catch (e) { nfw.toast.err('Failed to load system info'); }
 
   // Interfaces (static, refresh every 30s)

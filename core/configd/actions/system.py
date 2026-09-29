@@ -9,6 +9,8 @@ import time
 from typing import Any
 
 from configd.registry import action
+from config import store as cfg_store
+from modules.network.interfaces import resolve_roles
 
 UPTIME_FILE = "/proc/uptime"
 MEMINFO_FILE = "/proc/meminfo"
@@ -35,6 +37,7 @@ def system_info(_data: dict[str, Any]) -> dict[str, Any]:
         "uptime_s": float(u.split()[0]) if u else 0.0,
         "loadavg": _read(LOADAVG_FILE).strip().split()[:3],
         "disk": {"total": du.total, "used": du.used, "free": du.free},
+        "network_roles": _resolve_network_roles(),
     }
 
 
@@ -92,3 +95,15 @@ def system_logs(data: dict[str, Any]) -> dict[str, Any]:
     except FileNotFoundError:
         lines = []
     return {"file": path, "lines": lines}
+
+
+def _resolve_network_roles() -> dict[str, str]:
+    """Return {wan: 'ens33', lan: 'ens37', ...} for the active config.
+    Used by the dashboard to build per-interface RRD graph URLs without
+    pulling the whole config store."""
+    try:
+        cfg = cfg_store.read()
+        net = cfg.get("network", {}) or {}
+        return resolve_roles(net)
+    except Exception:
+        return {}
