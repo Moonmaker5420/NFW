@@ -575,14 +575,10 @@ def compile_ruleset(config: dict) -> str:
     # by an existing NAT facility such as port-forwarding,
     # 1:1 NAT, or UPnP.
     lines.append("        ct status dnat accept")
-    # PHASE-9.7B-NORM: forward-chain normalization
-    if _norm_cfg.get("mss_clamp", False):
-        _mss_size = int(_norm_cfg.get("mss_clamp_size", 1452))
-        lines.append(
-            f"        tcp flags syn tcp option maxseg size set {_mss_size}"
-        )
-    if _norm_cfg.get("frag_policy", "pass") == "drop":
-        lines.append("        ip frag-off & 0x1fff != 0 drop")
+    # PHASE-9.7B-NORM: normalization moved to a postrouting mangle chain
+    # so it also affects locally-originated traffic (the forward chain
+    # only sees forwarded packets, and the firewall's own connections
+    # — updates, ACME, NTP — were not being clamped).
 
     # UPnP-MINIUPNPD: jump to miniupnpd's dynamic filter chain.
     # Referenced by OPNsense-style UPnP (see miniupnpd_functions.sh).
@@ -951,6 +947,29 @@ def compile_ruleset(config: dict) -> str:
     lines.append("    chain prerouting_miniupnpd {")
     lines.append("    }")
     lines.append("")
+
+    # Outbound mangling chain — MSS clamp and fragment drop.
+    # Runs in the postrouting hook at priority mangle (before srcnat), so
+    # it sees BOTH locally-originated and forwarded outbound packets.
+    # The forward chain only sees forwarded traffic, so the box's own
+    # connections were previously unclamped and could stall on
+    # path-MTU-blackhole links.
+    _mangle_rules = []
+    if _norm_cfg.get("mss_clamp", False):
+        _mss_size = int(_norm_cfg.get("mss_clamp_size", 1452))
+        _mangle_rules.append(
+            f"        tcp flags syn tcp option maxseg size set {_mss_size}"
+        )
+    if _norm_cfg.get("frag_policy", "pass") == "drop":
+        _mangle_rules.append("        ip frag-off & 0x1fff != 0 drop")
+    if _mangle_rules:
+        lines.append("")
+        lines.append("    chain mangle_postrouting {")
+        lines.append(
+            "        type filter hook postrouting priority mangle; policy accept;"
+        )
+        lines.extend(_mangle_rules)
+        lines.append("    }")
 
     lines.append("    chain postrouting {")
     lines.append(
