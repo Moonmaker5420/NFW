@@ -129,6 +129,28 @@ def _stage_locked(cfg: dict[str, Any], author: str) -> str:
     except SchemaError as e:
         raise ConfigError(f"validation failed: {e}") from e
 
+    blob = json.dumps(cfg, sort_keys=True).encode("utf-8")
+    digest = hashlib.sha256(blob).hexdigest()[:16]
+
+    # Phantom-staging guard: if the incoming config is byte-identical to
+    # the active revision, don't create a staging entry. Without this,
+    # pressing Save without changing anything lit up the "uncommitted
+    # changes" banner and required a spurious Commit. If we're already
+    # staging and the user reverts to active, discard the stale staging.
+    try:
+        active = read()
+        active_blob = json.dumps(active, sort_keys=True).encode("utf-8")
+        if digest == hashlib.sha256(active_blob).hexdigest()[:16]:
+            try:
+                discard_staging()
+            except Exception:
+                pass
+            return digest
+    except Exception:
+        # If reading active fails, fall through and stage normally —
+        # worst case is the pre-fix behavior.
+        pass
+
     base_rev = _active_revision()
     _write_json(STAGING, cfg)
     _write_json(STAGING_META, {
@@ -136,8 +158,7 @@ def _stage_locked(cfg: dict[str, Any], author: str) -> str:
         "base_revision": base_rev,
         "staged_at": time.time(),
     })
-    blob = json.dumps(cfg, sort_keys=True).encode("utf-8")
-    return hashlib.sha256(blob).hexdigest()[:16]
+    return digest
 
 
 def get_staging() -> dict[str, Any] | None:
