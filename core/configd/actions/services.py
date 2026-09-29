@@ -132,7 +132,12 @@ def dhcp_apply(data):
 
     enabled = cfg["services"].get("dhcp_config", {}).get("enabled", False)
     if enabled:
-        _run(["systemctl", "enable", "isc-dhcp-server"])
+        _run(["systemctl", "unmask", "isc-dhcp-server"])
+        en = _run(["env", "SYSTEMCTL_SKIP_SYSV=1",
+                   "systemctl", "enable", "isc-dhcp-server"])
+        if en["rc"] != 0:
+            LOG.warning("enable isc-dhcp-server failed rc=%s err=%s",
+                        en["rc"], (en.get("stderr") or "").strip()[:200])
         r = _run(["systemctl", "restart", "isc-dhcp-server"])
     else:
         _run(["systemctl", "stop", "isc-dhcp-server"])
@@ -382,7 +387,12 @@ def ntp_apply(data):
     _atomic_write("/etc/chrony/chrony.conf", text)
     enabled = cfg["services"].get("ntp_config", {}).get("enabled", True)
     if enabled:
-        _run(["systemctl", "enable", "chrony"])
+        _run(["systemctl", "unmask", "chrony"])
+        en = _run(["env", "SYSTEMCTL_SKIP_SYSV=1",
+                   "systemctl", "enable", "chrony"])
+        if en["rc"] != 0:
+            LOG.warning("enable chrony failed rc=%s err=%s",
+                        en["rc"], (en.get("stderr") or "").strip()[:200])
         r = _run(["systemctl", "restart", "chrony"])
     else:
         _run(["systemctl", "stop", "chrony"])

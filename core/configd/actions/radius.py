@@ -370,7 +370,18 @@ def radius_apply(_data):
             LOG.error("freeradius check failed (rc=%s):\n%s", r["rc"], tail)
             raise RuntimeError(f"freeradius -XC failed:\n{tail}")
 
-    _run(["systemctl", "enable", "freeradius"])
+    # Unmask in case an older installer masked the unit.
+    _run(["systemctl", "unmask", "freeradius"])
+    # SYSTEMCTL_SKIP_SYSV=1: `enable` normally also runs
+    # systemd-sysv-install to sync /etc/rc*.d/, which is not writable
+    # inside configd's sandbox. NFW is systemd-only, so the sync is a
+    # no-op anyway. Without this, enable fails silently and the service
+    # won't start after reboot.
+    en = _run(["env", "SYSTEMCTL_SKIP_SYSV=1",
+               "systemctl", "enable", "freeradius"])
+    if en["rc"] != 0:
+        LOG.warning("systemctl enable freeradius failed rc=%s err=%s",
+                    en["rc"], (en.get("stderr") or "").strip()[:200])
     r = _run(["systemctl", "restart", "freeradius"], timeout=30)
     if r["rc"] != 0:
         raise RuntimeError(f"freeradius restart failed: {r['stderr'][:400]}")

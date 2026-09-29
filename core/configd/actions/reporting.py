@@ -516,6 +516,11 @@ def reporting_netflow_apply(_data):
     except OSError:
         pass
 
-    _run(["/usr/bin/systemctl", "enable", NETFLOW_SERVICE])
+    _run(["/usr/bin/systemctl", "unmask", NETFLOW_SERVICE])
+    en = _run(["/usr/bin/env", "SYSTEMCTL_SKIP_SYSV=1",
+               "/usr/bin/systemctl", "enable", NETFLOW_SERVICE])
+    if en["rc"] != 0:
+        LOG.warning("enable %s failed rc=%s err=%s",
+                    NETFLOW_SERVICE, en["rc"], (en.get("stderr") or "").strip()[:200])
     r = _run(["/usr/bin/systemctl", "restart", NETFLOW_SERVICE], timeout=20)
     return {"enabled": True, "service_rc": r["rc"], "stderr": r["stderr"][:300]}

@@ -526,7 +526,12 @@ def _apply_upnp(cfg: dict) -> dict:
     import os as _os
     if _os.path.exists("/etc/miniupnpd/nft_init.sh"):
         _run(["/bin/sh", "/etc/miniupnpd/nft_init.sh"])
-    _run(["/usr/bin/systemctl", "enable", UPNP_SERVICE])
+    _run(["/usr/bin/systemctl", "unmask", UPNP_SERVICE])
+    en = _run(["/usr/bin/env", "SYSTEMCTL_SKIP_SYSV=1",
+               "/usr/bin/systemctl", "enable", UPNP_SERVICE])
+    if en["rc"] != 0:
+        LOG.warning("enable %s failed rc=%s err=%s",
+                    UPNP_SERVICE, en["rc"], (en.get("stderr") or "").strip()[:200])
     r = _run(["/usr/bin/systemctl", "restart", UPNP_SERVICE], timeout=20)
     return {"enabled": True, "service_rc": r["rc"], "service_err": r["stderr"][:300]}
 
