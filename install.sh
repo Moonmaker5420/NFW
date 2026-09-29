@@ -718,6 +718,13 @@ with open(f"/var/lib/nfw/config/revisions/{rev}.meta", "w") as f:
 print(f"config revision: {rev}")
 PY
 
+mkdir -p /var/lib/nfw/dns/sources
+chown -R root:nfw /var/lib/nfw/dns
+chmod 0750 /var/lib/nfw/dns
+# Placeholder so a fresh install can start unbound before the first
+# refresh. The real content is written by nfw-dnsblock-refresh.
+touch /etc/unbound/nfw-blocklist.conf
+chmod 0644 /etc/unbound/nfw-blocklist.conf
 chown -R root:nfw /var/lib/nfw/config
 chmod -R 0750     /var/lib/nfw/config
 
@@ -767,6 +774,7 @@ for svc in nftables.service unbound.service suricata.service; do
     systemctl mask "$svc" 2>/dev/null || true
 done
 
+systemctl enable nfw-dnsblock-refresh.timer >/dev/null 2>&1 || true
 systemctl enable nfw-configd.service  >/dev/null 2>&1 || true
 systemctl enable nfw-api.service      >/dev/null 2>&1 || true
 systemctl enable nfw-portal.service   >/dev/null 2>&1 || true

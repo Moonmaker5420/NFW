@@ -10,9 +10,10 @@ from ..deps import require_acl
 router = APIRouter(prefix="/api/services", tags=["services"])
 
 
-async def _cd(action: str, data: dict[str, Any] | None = None):
+async def _cd(action: str, data: dict[str, Any] | None = None,
+               timeout: float = 60.0):
     try:
-        return await configd_call(action, data)
+        return await configd_call(action, data, timeout=timeout)
     except ConfigdError as e:
         raise HTTPException(status_code=502, detail=f"configd: {e}")
 
@@ -65,6 +66,25 @@ async def dns_querylog(lines: int = 100,
     return await _cd("dns.querylog", {"lines": lines})
 
 # NTP
+@router.get("/dns/blocklist")
+async def dns_blocklist_get(user: Session = Depends(require_acl("readonly"))):
+    return await _cd("dns.blocklist.get")
+
+
+@router.put("/dns/blocklist")
+async def dns_blocklist_set(body: dict = Body(...),
+                            user: Session = Depends(require_acl("admin"))):
+    return await _cd("dns.blocklist.set", {
+        "config": body.get("config") or {},
+        "author": user.username,
+    })
+
+
+@router.post("/dns/blocklist/refresh")
+async def dns_blocklist_refresh(user: Session = Depends(require_acl("admin"))):
+    return await _cd("dns.blocklist.refresh", timeout=300)
+
+
 @router.get("/ntp")
 async def ntp_get(user: Session = Depends(require_acl("readonly"))):
     return await _cd("ntp.config.get")

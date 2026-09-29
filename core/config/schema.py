@@ -217,8 +217,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "local_zone": "lan",
             "blocklists": {
                 "enabled": False,
-                "domains": [],
-                "sources": [],
+                "mode": "nxdomain",              # nxdomain | refused
+                "schedule": "daily",             # hourly | daily | weekly (stored; timer fixed daily in v1)
+                "manual": [],                    # user-added domains to block
+                "whitelist": [],                 # overrides everything, incl. subdomains
+                "domains": [],                   # DEPRECATED — kept for backwards compat
+                "sources": [],                   # [{"id","name","url","enabled"}]
             },
             "access_control": ["127.0.0.0/8 allow",
                                "192.168.0.0/16 allow",

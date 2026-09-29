@@ -170,6 +170,53 @@ def dhcp_leases(_data):
 # ===========================================================================
 # DNS (Unbound)
 # ===========================================================================
+# ---------------------------------------------------------------------------
+# DNS blocklists
+# ---------------------------------------------------------------------------
+@action("dns.blocklist.get")
+def dns_blocklist_get(_data):
+    from config import store as _cs
+    from modules.services import blocklists as _bl
+    staged = _cs.get_staging()
+    cfg = dict(staged if staged is not None else _cs.read())
+    svc = cfg.get("services", {}).get("dns_config", {}) or {}
+    bl = svc.get("blocklists", {}) or {}
+    return {"config": bl, "state": _bl._load_state(), "catalog": _bl.CATALOG}
+
+
+@action("dns.blocklist.set")
+def dns_blocklist_set(data):
+    from config import store as _cs
+    from config.schema import validate as _validate
+    new = data.get("config") or {}
+    staged = _cs.get_staging()
+    cfg = dict(staged if staged is not None else _cs.read())
+    svc = cfg.setdefault("services", {}).setdefault("dns_config", {})
+    bl = svc.setdefault("blocklists", {})
+    for k in ("enabled", "mode", "schedule", "manual", "whitelist", "sources"):
+        if k in new:
+            bl[k] = new[k]
+    _validate(cfg)
+    _cs.stage(cfg, author=data.get("author") or "unknown")
+    return {"staged": True, "config": bl}
+
+
+@action("dns.blocklist.refresh")
+def dns_blocklist_refresh(_data):
+    import subprocess as _sp
+    r = _sp.run(["/usr/local/sbin/nfw-dnsblock-refresh.py"],
+                capture_output=True, text=True, timeout=300)
+    return {"rc": r.returncode,
+            "stdout": (r.stdout or "")[-2000:],
+            "stderr": (r.stderr or "")[-2000:]}
+
+
+@action("dns.blocklist.sources.catalog")
+def dns_blocklist_catalog(_data):
+    from modules.services import blocklists as _bl
+    return {"catalog": _bl.CATALOG}
+
+
 @action("dns.config.get")
 def dns_get(_data):
     cfg = _effective_config()
