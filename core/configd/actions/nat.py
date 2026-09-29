@@ -502,6 +502,7 @@ def _apply_upnp(cfg: dict) -> dict:
     if not enabled:
         _run(["/usr/bin/systemctl", "stop", UPNP_SERVICE])
         _run(["/usr/bin/systemctl", "disable", UPNP_SERVICE])
+        _run(["/usr/bin/systemctl", "reset-failed", UPNP_SERVICE])
         return {"enabled": False, "service": "stopped"}
 
     # Direct write to the target file — the parent dir /etc is read-only

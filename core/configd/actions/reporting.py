@@ -504,6 +504,7 @@ def reporting_netflow_apply(_data):
     if not enabled:
         _run(["/usr/bin/systemctl", "stop", NETFLOW_SERVICE])
         _run(["/usr/bin/systemctl", "disable", NETFLOW_SERVICE])
+        _run(["/usr/bin/systemctl", "reset-failed", NETFLOW_SERVICE])
         return {"enabled": False, "service": "stopped"}
 
     if not nf.get("target"):

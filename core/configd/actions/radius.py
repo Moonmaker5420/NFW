@@ -319,6 +319,7 @@ def radius_apply(_data):
     if not enabled:
         _run(["systemctl", "stop", "freeradius"])
         _run(["systemctl", "disable", "freeradius"])
+        _run(["systemctl", "reset-failed", "freeradius"])
         _stage_then_commit(cfg, "radius: disable")
         return {"enabled": False, "note": "service disabled"}
 

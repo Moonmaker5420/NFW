@@ -325,6 +325,7 @@ def cp_apply(_data):
     else:
         _run(["systemctl", "stop", "nfw-portal"], timeout=15)
         _run(["systemctl", "disable", "nfw-portal"], timeout=15)
+        _run(["systemctl", "reset-failed", "nfw-portal"], timeout=15)
         portal_state = "stopped"
         bypass_timer = _enable_bypass_timer(False)
         bytes_timer = _enable_bytes_timer(False)

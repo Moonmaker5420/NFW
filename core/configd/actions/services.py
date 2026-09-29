@@ -332,7 +332,12 @@ def dns_apply(data):
                         en["rc"], (en.get("stderr") or "").strip()[:200])
         r = _run(["systemctl", "restart", "unbound"])
     else:
+        # Stop, disable, and clear any failed state. Without disable the
+        # unit stays enabled, systemd auto-restarts it (Restart=on-failure),
+        # and it can end up stuck in state=failed forever.
         _run(["systemctl", "stop", "unbound"])
+        _run(["systemctl", "disable", "unbound"])
+        _run(["systemctl", "reset-failed", "unbound"])
         r = {"rc": 0}
 
     # Apply commits staging — every other apply path (radius, advanced
@@ -423,6 +428,8 @@ def ntp_apply(data):
         r = _run(["systemctl", "restart", "chrony"])
     else:
         _run(["systemctl", "stop", "chrony"])
+        _run(["systemctl", "disable", "chrony"])
+        _run(["systemctl", "reset-failed", "chrony"])
         r = {"rc": 0}
     return {"applied": True, "service": r}
 
