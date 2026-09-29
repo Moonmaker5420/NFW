@@ -204,6 +204,27 @@ def status() -> dict:
     return {"interfaces": out}
 
 
+def _detect_wan_ip(config: dict) -> str:
+    """Return the current IP of the WAN interface, or "" on failure."""
+    try:
+        from modules.network.interfaces import resolve_roles
+        roles = resolve_roles(config.get("network", {}) or {})
+        wan = roles.get("wan")
+        if not wan:
+            return ""
+        r = subprocess.run(
+            ["/usr/sbin/ip", "-4", "-o", "addr", "show", wan],
+            capture_output=True, text=True, timeout=5,
+        )
+        for line in (r.stdout or "").splitlines():
+            parts = line.split()
+            if "inet" in parts:
+                return parts[parts.index("inet") + 1].split("/")[0]
+    except Exception:
+        pass
+    return ""
+
+
 def peer_qr(config: dict, instance_id: str, peer_id: str) -> dict:
     """Generate client config + QR for a peer. Returns base64 PNG."""
     wg = config.get("vpn", {}).get("wireguard", {}) or {}
@@ -212,7 +233,19 @@ def peer_qr(config: dict, instance_id: str, peer_id: str) -> dict:
             continue
         server_pub = inst.get("public_key", "")
         listen_port = inst.get("listen_port", 51820)
-        endpoint_host = inst.get("endpoint_host", "")
+        endpoint_host = (inst.get("endpoint_host") or "").strip()
+        if not endpoint_host:
+            # Fall back to the WAN interface IP. On a real firewall this
+            # is the public address the client will reach; on a VM behind
+            # NAT it's at least a valid address so the QR is well-formed.
+            endpoint_host = _detect_wan_ip(config)
+        if not endpoint_host:
+            raise RuntimeError(
+                "WireGuard endpoint host is not set and could not be "
+                "auto-detected. Set 'Public endpoint' on the instance "
+                "(e.g. your WAN IP or a DDNS hostname) before generating "
+                "peer configs."
+            )
         for peer in inst.get("peers", []):
             if peer.get("id") != peer_id:
                 continue
