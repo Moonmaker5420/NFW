@@ -415,6 +415,11 @@ def ntp_preview(_data):
 @action("ntp.apply")
 def ntp_apply(data):
     cfg = _effective_config()
+    # Re-apply timezone on every NTP apply. The NTP page is the closest
+    # thing to a "system time" settings surface, so this keeps the
+    # system in sync if the config's timezone was changed by any path.
+    tz = (cfg.get("system", {}) or {}).get("timezone") or "UTC"
+    _run(["timedatectl", "set-timezone", tz])
     text = compile_chrony(cfg)
     _atomic_write("/etc/chrony/chrony.conf", text)
     enabled = cfg["services"].get("ntp_config", {}).get("enabled", True)

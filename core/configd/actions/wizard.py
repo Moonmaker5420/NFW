@@ -141,6 +141,16 @@ def wizard_complete(data: dict[str, Any]) -> dict[str, Any]:
     except Exception as e:
         LOG.warning("wizard: hostnamectl failed: %s", e)
 
+    # Timezone — the config stores it but nothing applied it live.
+    # Without this, the system stays on its install default (usually
+    # Etc/UTC) even though the user selected e.g. Asia/Kolkata in the
+    # wizard. Best-effort; a bad tz string just logs and moves on.
+    try:
+        subprocess.run(["timedatectl", "set-timezone", timezone],
+                       capture_output=True, timeout=5)
+    except Exception as e:
+        LOG.warning("wizard: timedatectl set-timezone failed: %s", e)
+
     _update_etc_hosts(hostname)
 
     # 4. Remove marker
