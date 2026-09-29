@@ -275,7 +275,18 @@ def dns_apply(data):
 
     enabled = cfg["services"].get("dns_config", {}).get("enabled", False)
     if enabled:
-        _run(["systemctl", "enable", "unbound"])
+        # Older installs masked unbound.service to prevent apt auto-start
+        # with default configs. Unmask before enable so a user's first
+        # Save & Apply actually starts the daemon.
+        _run(["systemctl", "unmask", "unbound"])
+        # SYSTEMCTL_SKIP_SYSV: without it, `enable` also tries to sync
+        # with /etc/rc*.d/, which is not writable inside configd's
+        # sandbox. NFW is systemd-only, so the sync is a no-op anyway.
+        en = _run(["env", "SYSTEMCTL_SKIP_SYSV=1",
+                   "systemctl", "enable", "unbound"])
+        if en["rc"] != 0:
+            LOG.warning("systemctl enable unbound failed rc=%s err=%s",
+                        en["rc"], (en.get("stderr") or "").strip()[:200])
         r = _run(["systemctl", "restart", "unbound"])
     else:
         _run(["systemctl", "stop", "unbound"])

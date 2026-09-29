@@ -770,9 +770,12 @@ fi  # fresh-only: setup marker
 # ==========================================================================
 log "enabling and starting services..."
 
-for svc in nftables.service unbound.service suricata.service; do
-    systemctl mask "$svc" 2>/dev/null || true
-done
+# Only nftables.service stays masked — NFW's nfw-firewall-load.service
+# owns the firewall, and Debian's own nftables.service would load the
+# same file on boot, racing ours. unbound and suricata are opt-in via
+# the GUI, so they must stay unmaskable (previously masked here by
+# mistake — the GUI enable path can't start a masked unit).
+systemctl mask nftables.service 2>/dev/null || true
 
 systemctl enable nfw-dnsblock-refresh.timer >/dev/null 2>&1 || true
 systemctl enable nfw-configd.service  >/dev/null 2>&1 || true
