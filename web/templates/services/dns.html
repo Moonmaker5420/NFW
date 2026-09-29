@@ -257,10 +257,23 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       await saveAll(true);
 
-      // This call is synchronous on the backend: it downloads sources,
-      // regenerates the blocklist, compiles unbound.conf, reloads the
-      // daemon. Can take 5–15 seconds with multiple sources.
-      status.textContent = 'Downloading sources and reloading unbound… (may take 10–15s)';
+      // Pick a message that matches what the backend will actually do.
+      // The apply call is synchronous and opaque, but we can infer the
+      // phase from the config the user just set.
+      const dnsEnabled   = document.getElementById('enabled').checked;
+      const blkEnabled   = document.getElementById('blk').checked;
+      const hasSources   = (BL.sources || []).some(s => s.enabled !== false);
+      let msg;
+      if (!dnsEnabled) {
+        msg = 'Stopping DNS service…';
+      } else if (blkEnabled && hasSources) {
+        msg = 'Downloading sources and reloading unbound… (may take 10–15s)';
+      } else if (blkEnabled) {
+        msg = 'Regenerating blocklist and reloading unbound… (may take a few seconds)';
+      } else {
+        msg = 'Applying DNS config and reloading unbound…';
+      }
+      status.textContent = msg;
       await nfw.api.post('/api/services/dns/apply');
 
       status.textContent = 'Applied ✓';
