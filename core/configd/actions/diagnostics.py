@@ -134,6 +134,11 @@ def diag_traceroute(data):
     max_hops = max(1, min(max_hops, 30))
     family = data.get("family", "auto")
 
+    if not os.path.exists("/usr/bin/traceroute"):
+        raise RuntimeError(
+            "traceroute not installed. Run: apt install traceroute"
+        )
+
     cmd = ["/usr/bin/traceroute", "-n", "-w", "2", "-q", "1", "-m", str(max_hops)]
     if family == "ipv4":
         cmd.append("-4")

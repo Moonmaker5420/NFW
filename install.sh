@@ -287,15 +287,15 @@ apt-get install -y -qq \
     openssl whiptail socat nftables rrdtool conntrack \
     \
     `# --- Base services ---` \
-    chrony isc-dhcp-server bind9-dnsutils unbound unbound-anchor \
+    chrony isc-dhcp-server isc-dhcp-client bind9-dnsutils unbound unbound-anchor \
     \
     `# --- VPN ---` \
-    wireguard wireguard-tools openvpn \
+    wireguard wireguard-tools openvpn qrencode \
     strongswan strongswan-swanctl strongswan-charon \
     strongswan-libcharon strongswan-starter \
     \
     `# --- Security ---` \
-    suricata suricata-update \
+    suricata suricata-update certbot \
     \
     `# --- Reverse proxy / forward proxy ---` \
     haproxy squid \
@@ -305,7 +305,7 @@ apt-get install -y -qq \
     freeradius freeradius-utils freeradius-ldap \
     \
     `# --- Diagnostics ---` \
-    tcpdump nmap \
+    tcpdump nmap traceroute etherwake wakeonlan \
     >/dev/null
 log "dependencies installed"
 

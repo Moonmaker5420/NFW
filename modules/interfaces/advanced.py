@@ -126,8 +126,14 @@ def _live_create(dev: dict) -> dict:
 
     # Assign address if configured
     if dev.get("dhcp") and kind in ("vlan", "bridge", "bond", "lagg"):
-        # DHCP on the new interface — best effort
-        _run(["/usr/sbin/dhclient", "-1", "-v", name], timeout=20)
+        # DHCP on the new interface — best effort. dhclient is part of
+        # isc-dhcp-client; if missing, log clearly rather than silently
+        # leaving the interface up with no address.
+        if not os.path.exists("/usr/sbin/dhclient"):
+            LOG.warning("dhclient not installed — %s has no DHCP address. "
+                        "Run: apt install isc-dhcp-client", name)
+        else:
+            _run(["/usr/sbin/dhclient", "-1", "-v", name], timeout=20)
     elif dev.get("address"):
         _run(["/usr/sbin/ip", "addr", "add", dev["address"], "dev", name])
 

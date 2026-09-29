@@ -233,11 +233,18 @@ def peer_qr(config: dict, instance_id: str, peer_id: str) -> dict:
                 f.write(cfg_text)
                 tmp = f.name
             try:
+                if not os.path.exists("/usr/bin/qrencode"):
+                    raise RuntimeError(
+                        "qrencode not installed. Run: apt install qrencode"
+                    )
                 png = subprocess.run(
                     ["/usr/bin/qrencode", "-o", "-", "-t", "PNG", "-s", "6",
                      "-m", "2", "-r", tmp],
                     capture_output=True,
                 )
+                if png.returncode != 0:
+                    err = (png.stderr or b"").decode(errors="replace")[:300]
+                    raise RuntimeError(f"qrencode failed: {err}")
                 b64 = base64.b64encode(png.stdout).decode()
             finally:
                 os.unlink(tmp)

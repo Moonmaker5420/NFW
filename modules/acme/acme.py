@@ -8,7 +8,13 @@ LE_LIVE = "/etc/letsencrypt/live"
 LE_RENEWAL = "/etc/letsencrypt/renewal"
 
 
+CERTBOT = "/usr/bin/certbot"
+
+
 def _run(cmd: list[str], timeout: int = 180) -> dict:
+    if cmd and cmd[0] == CERTBOT and not os.path.exists(CERTBOT):
+        return {"rc": 127, "out": "",
+                "err": "certbot not installed. Run: apt install certbot"}
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return {"rc": r.returncode, "out": r.stdout, "err": r.stderr}
