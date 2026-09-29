@@ -79,19 +79,25 @@ def dhcp_set(data):
     cfg = _effective_config()
     existing = cfg.get("services", {}).get("dhcp_config", {}) or {}
 
-    # Merge: start from existing, overlay new fields only if present
+    # Merge: start from existing, overlay incoming fields.
+    # NB: empty subnets/static_reservations lists are intentional —
+    # the front-end gates Save on a successful load, so if it sends an
+    # empty list, the user deleted the last item. (An earlier version
+    # tried to distinguish "not loaded" from "user deleted" here and
+    # silently ignored the delete; the distinction belongs in the UI.)
     merged = dict(existing)
     for k, v in new.items():
-        # Never let a UI page wipe the subnets list unless it explicitly
-        # sends a non-empty one. Empty list often means "not loaded".
-        if k == "subnets" and isinstance(v, list) and len(v) == 0:
-            # Only allow explicit empty if the existing is also empty
-            if existing.get("subnets"):
-                continue
-        if k == "static_reservations" and isinstance(v, list) and len(v) == 0:
-            if existing.get("static_reservations"):
-                continue
         merged[k] = v
+
+    # Refuse to stage enabled=true with no subnets. dhcpd exits with
+    # "No subnet declaration for <iface>" otherwise — the GUI would show
+    # enabled, the daemon would be failed, and the config would lie. Do
+    # this at save time so no broken staging entry is ever created.
+    if merged.get("enabled") and not (merged.get("subnets") or []):
+        raise ValueError(
+            "Cannot enable DHCP without at least one subnet. "
+            "Click '+ Subnet' to add one, then Save & Apply."
+        )
 
     cfg.setdefault("services", {})["dhcp_config"] = merged
     cfg["services"]["dhcp"] = bool(merged.get("enabled"))
@@ -140,10 +146,31 @@ def dhcp_apply(data):
                         en["rc"], (en.get("stderr") or "").strip()[:200])
         r = _run(["systemctl", "restart", "isc-dhcp-server"])
     else:
+        # Stop AND disable. Just stopping leaves the unit enabled, so
+        # systemd auto-restarts it (Restart=on-failure), dhcpd crashes
+        # again (no subnet → "No subnet declaration"), and the unit
+        # sits in state=failed forever. reset-failed also clears the
+        # restart-limit state so the unit can start cleanly next time
+        # the user enables it.
         _run(["systemctl", "stop", "isc-dhcp-server"])
+        _run(["systemctl", "disable", "isc-dhcp-server"])
+        _run(["systemctl", "reset-failed", "isc-dhcp-server"])
         r = {"rc": 0}
 
     return {"applied": True, "interface": iface, "service": r}
+
+
+@action("dhcp.status")
+def dhcp_status(_data):
+    """Daemon state + configured-enabled flag, so the GUI can show
+    reality vs intent side by side."""
+    r = _run(["systemctl", "is-active", "isc-dhcp-server"])
+    svc = (r["stdout"] or "").strip() or "unknown"
+    cfg = cfg_store.read()
+    dc = cfg.get("services", {}).get("dhcp_config", {}) or {}
+    return {"service": svc,
+            "enabled": bool(dc.get("enabled")),
+            "subnet_count": len(dc.get("subnets") or [])}
 
 
 @action("dhcp.leases")

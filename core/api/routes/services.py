@@ -42,6 +42,11 @@ async def dhcp_leases(user: Session = Depends(require_acl("readonly"))):
     return await _cd("dhcp.leases")
 
 # DNS
+@router.get("/dhcp/status")
+async def dhcp_status_route(user: Session = Depends(require_acl("readonly"))):
+    return await _cd("dhcp.status")
+
+
 @router.get("/dns")
 async def dns_get(user: Session = Depends(require_acl("readonly"))):
     return await _cd("dns.config.get")
